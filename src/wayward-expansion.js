@@ -2285,9 +2285,10 @@
   }
   var chipEl = null;
   function chipLabel(inside) {
+    var tag = ' <span style="color:#78716c;font-size:0.6rem;">v' + WEXP_VERSION + '</span>';
     return inside
-      ? '<span style="color:#fcd34d;font-weight:500;">\u2302 You are in town</span><span style="color:#a8a29e;"> \u2014 the Village map is open in the House section</span>'
-      : '<span style="color:#e7e5e4;">\u2302 Visit City</span><span style="color:#a8a29e;"> \u2014 shops, hiring hall, outings</span>';
+      ? '<span style="color:#fcd34d;font-weight:500;">\u2302 You are in town</span><span style="color:#a8a29e;"> \u2014 the Village map is open in the House section</span>' + tag
+      : '<span style="color:#e7e5e4;">\u2302 Visit City</span><span style="color:#a8a29e;"> \u2014 shops, hiring hall, outings</span>' + tag;
   }
   function ensureChip(inside) {
     var wrap = houseWrapper();
@@ -2336,7 +2337,7 @@
     b.setAttribute('data-wexp', 'visit-city');
     b.className = goOut.className;
     b.title = 'Wayward Village Expansion ' + WEXP_VERSION;
-    b.innerHTML = '<span class="text-sm text-stone-100">Visit City</span><span class="text-xs text-stone-400 mt-0.5">the shops, the hiring hall, outings \u2014 opens in the House section</span>';
+    b.innerHTML = '<span class="text-sm text-stone-100">Visit City</span><span class="text-xs text-stone-400 mt-0.5">the shops, the hiring hall, outings \u2014 opens in the House section</span><span class="text-[0.55rem] text-stone-600">v' + WEXP_VERSION + '</span>';
     b.addEventListener('click', function (e) { e.stopPropagation(); startCityVisit(); });
     parent.appendChild(b);
   }

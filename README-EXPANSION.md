@@ -1,5 +1,11 @@
 # Wayward — Expansión "Pueblo y El Farol Dorado"
 
+> **⚠️ IMPORTANTE — qué archivo abrir**
+>
+> - Abre **`wayward-expanded.html`** — es el juego CON la expansión.
+> - No abras `wayward-baseline.html`: es la copia del juego ORIGINAL **sin** la expansión (solo referencia del build).
+> - Verificación rápida: el chip "⌂ Visit City" lleva la etiqueta **v2** y el panel de la villa muestra **"expansion v2"** en su cabecera.
+
 Expansión no invasiva para el juego **Wayward** (archivo HTML autocontenido), implementada
 como un **módulo add-on** que se inyecta al final del `<body>` del HTML original. **No se
 modificó ni una línea del código del juego**; toda la expansión vive en un namespace propio
