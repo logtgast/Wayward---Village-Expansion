@@ -1,6 +1,7 @@
 /* Full E2E: real game + expansion in jsdom. New game (Pippa), taproom,
-   Visit City, then walks every overlay screen clicking through shops,
-   haggle, buy, friend, outings, hiring hall, casino, and Return home. */
+   Visit City, then walks the Village panel (house-pane overlay panel with
+   rooms-style cards) plus the contextual Actions pane: shops, haggle, buy,
+   friend, outings, hiring hall, casino, and Head home. */
 const fs = require('fs');
 const path = require('path');
 const { JSDOM, VirtualConsole } = require('jsdom');
@@ -34,10 +35,16 @@ function tick() {
   if (labels().some(l => /Stock Up|Pay \d+g/.test(l))) return inGame();
   if (stage > 40) { console.log('never started'); return done(); }
   clickMatch(/^Yes$/) || clickMatch(/I understand and accept/) || clickMatch(/^New Game$/) ||
-    clickMatch(/^(Begin|Continue) — Pippa/) || (!picked && (picked = !!clickMatch(/^Pippa/))) ||
+    clickMatch(/^(Begin|Continue) \u2014 Pippa/) || (!picked && (picked = !!clickMatch(/^Pippa/))) ||
     clickMatch(/^Skip$/) || clickMatch(/^Next$/) || clickMatch(/^Leave it all to fate$/) || clickMatch(/^(Begin|Open the doors)\b/i);
   setTimeout(tick, 450);
 }
+function panel() { return w.document.getElementById('wexp-town-panel'); }
+function panelText() { const p = panel(); return p ? (p.textContent || '') : ''; }
+function actionsBox() { return w.document.getElementById('wexp-town-actions'); }
+function actionsText() { const box = actionsBox(); return box ? (box.textContent || '') : ''; }
+function actionBtn(re) { const box = actionsBox(); if (!box) return null; return Array.from(box.querySelectorAll('button')).find(b => re.test(b.textContent || '')); }
+function cardBtn(re) { const p = panel(); if (!p) return null; return Array.from(p.querySelectorAll('.cursor-pointer')).find(x => re.test(x.textContent || '')); }
 function inGame() {
   clickMatch(/Head down to the taproom/i);
   setTimeout(() => {
@@ -45,76 +52,79 @@ function inGame() {
     t('visit-city injected in the real game', !!vb);
     vb.click();
     setTimeout(() => {
-      const ov = w.document.getElementById('wexp-overlay');
-      t('overlay opens', ov && ov.style.display === 'flex');
-      t('village screen renders', ov && ov.textContent.indexOf('Whisperwood') >= 0);
+      const p = panel();
+      t('Village panel opens inside the house pane', !!p);
+      t('village screen renders', panelText().indexOf('Whisperwood') >= 0);
+      t('locations render as cards (not a vertical list)', !!p && p.querySelectorAll('.cursor-pointer').length >= 8);
       t('city.inside set', w.wayward.state.wexp.city.inside === true);
       t('friend generated', !!w.wayward.state.wexp.friend);
+      t('Visit City button reflects being in town', (w.document.querySelector('button[data-wexp="visit-city"]').textContent || '').indexOf('You are in town') === 0);
+      t('companion actions offered in Actions pane', !!actionBtn(/Walk with/));
+      t('Head home offered in Actions pane', !!actionBtn(/Head home/));
       walk();
     }, 600);
   }, 900);
 }
-function overlayText() { const ov = w.document.getElementById('wexp-overlay'); return ov ? (ov.textContent || '') : ''; }
-function overlayOpen() { const ov = w.document.getElementById('wexp-overlay'); return !!ov && ov.style.display === 'flex'; }
-function safeClick(re, label) {
-  const before = errors.length;
-  const ok = clickMatch(re);
-  if (!ok) { console.log('  (missing button: ' + (label || re) + ')'); return false; }
-  if (errors.length > before) { fail++; console.log('FAIL  click caused error: ' + (label || re) + ' -> ' + errors[errors.length - 1]); return true; }
-  return true;
-}
 function walk() {
   /* step engine: each step polls until its condition or timeout */
   const steps = [
-    { name: 'herbalist shop opens', click: /Greenroot's Herbalist/, check: () => overlayText().indexOf('Greenroot') >= 0 && /For sale|haggle/i.test(overlayText()) },
-    { name: 'shop has Buy buttons (stock persists)', click: null, check: () => labels().some(l => /^Buy/.test(l)), setup: () => w.wayward.set('economy.gold', 800) },
-    { name: 'buy executes', click: /^Buy 1/, check: () => w.wayward.state.economy.gold < 800 },
-    { name: 'back to village', click: null, check: () => overlayText().indexOf('Whisperwood') >= 0, setup: () => clickAny2(/\u2190 Back/) },
-    { name: 'hiring hall renders', click: /Hiring Hall/, check: () => /Hiring|hire \u00b7/i.test(overlayText()) },
-    { name: 'back to village 2', click: null, check: () => overlayText().indexOf('Whisperwood') >= 0, setup: () => clickAny2(/\u2190 Back/) },
-    { name: 'friend home renders', click: /home/i, check: () => /friend|call|visit/i.test(overlayText()) },
-    { name: 'back to village 3', click: null, check: () => overlayText().indexOf('Whisperwood') >= 0, setup: () => clickAny2(/\u2190 Back|Not now/) },
-    { name: 'outing renders', click: /Town Square|Riverside/, cardText: 'Market Green', check: () => /Town Square|stalls|Market Green/i.test(overlayText()) },
-    { name: 'outing back', click: null, check: () => overlayText().indexOf('Whisperwood') >= 0, setup: () => clickAny2(/\u2190 Back|Not now/) },
-    { name: 'casino for sale renders', click: /Gilded Lantern/, cardText: 'Gilded Lantern', check: () => /Gilded Lantern|deed/i.test(overlayText()) },
-    { name: 'casino back', click: null, check: () => overlayText().indexOf('Whisperwood') >= 0, setup: () => clickAny2(/\u2190 Back|Walk away/) },
+    { name: 'herbalist shop opens from its card', setup: () => { const c = cardBtn(/Greenroot's Herbalist/); if (c) c.click(); }, check: () => panelText().indexOf('Maren Greenroot') >= 0 },
+    { name: 'shop shows stock (persistent restock)', check: () => /For sale/.test(panelText()) && panelText().indexOf('Empty shelves') < 0 },
+    { name: 'Buy buttons live in the Actions pane', setup: () => { w.wayward.set('economy.gold', 800); if (w.waywardExpansion) w.waywardExpansion.rerender(); }, check: () => !!actionBtn(/^Buy 1/) },
+    { name: 'buy executes', setup: () => { const b = actionBtn(/^Buy 1/); if (b) b.click(); }, check: () => w.wayward.state.economy.gold < 800 },
+    { name: 'haggle button present', check: () => !!actionBtn(/haggle/i) },
+    { name: 'back to village map', setup: () => { const b = actionBtn(/\u2190 Village/); if (b) b.click(); }, check: () => panelText().indexOf('Whisperwood') >= 0 },
+    { name: 'companion invited', setup: () => { const b = actionBtn(/Walk with/); if (b) b.click(); }, check: () => w.wayward.state.wexp.city.companion === 'wife' },
+    { name: 'companion strip shows her status', check: () => /mood:/.test(panelText()) },
+    { name: 'friend home opens', setup: () => { const c = cardBtn(/'s home/); if (c) c.click(); }, check: () => /Her home is|tea and talk/i.test(panelText() + actionsText()) },
+    { name: 'friend actions in Actions pane', check: () => !!actionBtn(/Stay for tea and talk/) },
+    { name: 'back to village before the outing', setup: () => { const b = actionBtn(/\u2190 Village/); if (b) b.click(); }, check: () => panelText().indexOf('Whisperwood') >= 0 },
+    { name: 'outing opens and auto-invites the wife', setup: () => { const c = cardBtn(/Riverside|Town Square/); if (c) c.click(); }, check: () => w.wayward.state.wexp.city.companion === 'wife' && /Riverside|Town Square/i.test(panelText()) },
+    { name: 'outing actions rendered', check: () => !!actionBtn(/Sit together|Browse the stalls|Walk the garden rows|Listen to the street player/) },
+    { name: 'back to village before hiring', setup: () => { const b = actionBtn(/\u2190 Village/); if (b) b.click(); }, check: () => panelText().indexOf('Whisperwood') >= 0 },
+    { name: 'hiring hall renders', setup: () => { const c = cardBtn(/Hiring Hall/); if (c) c.click(); }, check: () => /Looking for work|Your people/.test(panelText()) },
+    { name: 'back to village before casino', setup: () => { const b = actionBtn(/\u2190 Village/); if (b) b.click(); }, check: () => panelText().indexOf('Whisperwood') >= 0 },
+    { name: 'derelict casino card renders', setup: () => { const c = cardBtn(/Gilded Lantern/); if (c) c.click(); }, check: () => /deed|Restoration plan/i.test(panelText()) },
   ];
   let i = 0;
   function next() {
     if (i >= steps.length) { finishWalk(); return; }
     const st = steps[i++];
     if (st.setup) { try { st.setup(); } catch (e) { } }
-    if (st.click) {
-      const before = errors.length;
-      const found = clickAny2(st.click);
-      if (!found) {
-        const cardVisible = st.cardText && overlayText().indexOf(st.cardText) >= 0;
-        if (!cardVisible) { console.log('  (skip, not offered now: ' + st.name + ')'); i = steps.length; finishWalk(); return; }
-        console.log('  (missing: ' + st.name + ')');
-      }
-      if (errors.length > before) { fail++; console.log('FAIL  error on ' + st.name + ': ' + errors[errors.length - 1]); }
-    }
     let tries = 0;
     (function poll() {
       tries++;
       let ok = false;
       try { ok = st.check(); } catch (e) { }
-      if (ok) { t(st.name, true); setTimeout(next, 250); }
-      else if (tries < 12) setTimeout(poll, 300);
-      else { t(st.name, false); setTimeout(next, 250); }
+      if (ok) { t(st.name, true); setTimeout(next, 200); }
+      else if (tries < 10) setTimeout(poll, 300);
+      else { t(st.name, false); console.log('   panel:', panelText().slice(0,120).replace(/\n/g,' ')); console.log('   actions:', actionsText().slice(0,120)); if (errors.length) console.log('   lastError:', errors[errors.length-1]); setTimeout(next, 200); }
     })();
   }
   setTimeout(next, 300);
 }
-function clickAny2(re) { const b = Array.from(w.document.querySelectorAll('button, [class*="cursor-pointer"]')).find(x => re.test(x.textContent || '')); if (b) { b.click(); return true; } return false; }
 function finishWalk() {
-  safeClick(/Return home/, 'return home');
+  /* buy the casino to exercise the full panel, then head home */
+  w.wayward.set('economy.gold', 20000);
+  if (w.waywardExpansion) w.waywardExpansion.rerender();
+  const lantern = cardBtn(/Gilded Lantern/);
+  if (lantern) lantern.click();
   setTimeout(() => {
-    t('return home closes overlay + city.inside false', !overlayOpen() && w.wayward.state.wexp.city.inside === false);
-    const s = w.wayward.state;
-    console.log('expansion log entries:', (s.log || []).filter(l => /lane|deed|Bought|nettle/i.test(l.text)).map(l => l.text).slice(0, 5));
-    done();
-  }, 600);
+    const buy = actionBtn(/Buy the deed/);
+    if (buy) buy.click();
+    setTimeout(() => {
+      t('casino purchased and management view opens', w.wayward.state.wexp.businesses.casino.owned === true && /treasury/.test(panelText()));
+      const home = actionBtn(/Head home/);
+      if (home) home.click();
+      setTimeout(() => {
+        t('Head home ends the trip + removes the panel', w.wayward.state.wexp.city.inside === false && !panel());
+        t('Visit City button reverts to entry label', (w.document.querySelector('button[data-wexp="visit-city"]').textContent || '').indexOf('Visit City') === 0);
+        const s = w.wayward.state;
+        console.log('expansion log entries:', (s.log || []).filter(l => /lane|deed|Bought/i.test(l.text)).map(l => l.text).slice(0, 5));
+        done();
+      }, 700);
+    }, 700);
+  }, 500);
 }
 function done() {
   console.log('\n' + pass + ' passed, ' + fail + ' failed | console errors: ' + errors.length);

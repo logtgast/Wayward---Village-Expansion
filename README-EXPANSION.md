@@ -3,7 +3,8 @@
 Expansión no invasiva para el juego **Wayward** (archivo HTML autocontenido), implementada
 como un **módulo add-on** que se inyecta al final del `<body>` del HTML original. **No se
 modificó ni una línea del código del juego**; toda la expansión vive en un namespace propio
-(`state.wexp`) y en una capa de UI superpuesta (overlay DOM).
+(`state.wexp`) y en una capa de UI propia: un **panel Village dentro de la sección
+House** del frontend y las **acciones del personaje en el panel Actions**.
 
 ## Qué añade
 
@@ -13,11 +14,14 @@ Conforme al brief (`BRIEF.md`), fases 1–5:
 |---|---|
 | **Visitar Pueblo (Visit City)** | Botón junto a "Go out…" en la columna/pestaña de acciones. Disponible en preparación y cierre (no en servicio, no con recado pendiente, no con evento abierto). Auto-retorno a la taberna a las 2 a.m. |
 
-**Dónde están los botones** (tres puntos de entrada, según el diseño del juego):
+**Dónde está la UI** (integrada en el frontend del juego, sin menús aparte):
 
-- **Escritorio (≥lg):** en el panel de acciones, debajo de "Go out…", aparece **"Visit City"**. Además, la cabecera del panel del mapa de la casa pasa a llamarse **"Home"** y encima suyo hay un botón **"Village — town & the Lantern"**.
-- **Móvil (<lg):** la pestaña **"house"** de la barra inferior pasa a llamarse **"Village"** y al pulsarla abre el panel del pueblo (el mapa original de la casa queda accesible dentro, como vista "Home").
-- El botón **"Visit City"** solo se inyecta cuando "Go out…" está activo (fase de preparación/cierre); fuera de esas fases el juego bloquea las salidas y no aparece.
+- **Entrada:** en el panel **Actions**, debajo de "Go out…", aparece el botón **"Visit City"** (solo cuando "Go out…" está activo, fase de preparación/cierre). En móvil, la pestaña **"house"** de la barra inferior pasa a llamarse **"Village"**.
+- **Panel Village (sección House):** al visitar la ciudad, la sección House del juego se cubre con un panel opaco al estilo del mapa de habitaciones: cada ubicación (6 tiendas, casa de la amiga, 2 paseos, Hiring Hall, El Farol Dorado) es una **tarjeta de habitación** clicable, con chip de abierto/cerrado y resaltado azul de "estás aquí". Nada de listas verticales ni overlay flotante.
+- **Compañía:** al salir sola aparece solo el mapa de la villa; con la esposa (o un empleado) se añade una franja superior con su nombre, estado de ánimo y energía. "Walk with…" / "Part ways" viven en Actions; abrir un paseo con la esposa invita automáticamente.
+- **Acciones en Actions:** los verbos del personaje (comprar/regatear/vender en tiendas, hablar con la amiga, acciones del paseo, restaurar salas, apostar, robar/bancar tesorería, "Head home") se renderizan **en el panel Actions del juego**, no en el panel de información.
+- **Navegación:** "← Village" / "Head home ⌂" en la cabecera del panel y en Actions. El botón "Visit City" pasa a "You are in town" durante la visita y vuelve al entrar de nuevo.
+- Si el panel House del juego no se encuentra (DOM inesperado), la expansión degrada automáticamente al overlay flotante anterior.
 | **6 tiendas + Clothier** | Herbalista, Carnicero, Cervecero, Boticario, Mercado y Librero: destinos únicos (escena, no grafo de salas). Precios con recargo sobre el precio base del juego (`un[id].price`), reposición diaria por rareza, ofertas ×5/×10, regateo 1 vez por visita (carisma/ingenio), reventa al 50–60%. El **Sastre (Clothier)** se conserva intacto: su tarjeta enlaza al flujo original "Go out…". |
 | **Amiga de Pippa** | Visita a su casa (procedural, persistente en el save). Sube ánimo y vínculo; salida con cooldown diario y bloqueo si está agotada. |
 | **2 salidas en pareja** | Paseo y excursión: avanzan el reloj, cuestan oro, suben el ánimo de la esposa, con cooldown. |
@@ -38,8 +42,8 @@ Para regenerar el build tras editar `src/wayward-expansion.js`:
 ```bash
 node --check src/wayward-expansion.js
 node tests/expansion.test.js          # 63 aserciones de lógica (§9 del brief)
-node tests/dom.test.js                # 15 aserciones de inyección UI (DOM simulado)
-node tests/ui-walk.js                 # recorre ~157 clics del overlay buscando crashes
+node tests/dom.test.js                # 37 aserciones de la UI (panel Village + Actions)
+node tests/ui-walk.js                 # recorrido ciego de ~70 clics del panel (detector de crashes)
 node tests/e2e-jsdom.js               # E2E: juego REAL en jsdom — nueva partida, Visit City, compra, casino
 node tools/build.js                   # (opcional) re-ensambla wayward-expanded.html
 ```
@@ -90,8 +94,8 @@ wayward-baseline.html    copia intacta del juego original
 wayward-expanded.html    ENTREGABLE: juego + expansión inyectada
 src/wayward-expansion.js módulo completo (~2.050 líneas, 13 secciones)
 tests/expansion.test.js  harness: 63 aserciones de los tests de aceptación (§9)
-tests/dom.test.js        inyección UI verificada contra un DOM simulado (15 aserciones)
-tests/ui-walk.js         recorrido de ~157 clics del overlay (detector de crashes)
+tests/dom.test.js        UI verificada contra un DOM simulado (37 aserciones: panel + acciones)
+tests/ui-walk.js         recorrido ciego de ~70 clics del panel (detector de crashes)
 tests/e2e-jsdom.js       E2E con el bundle real del juego en jsdom (partida nueva → Visit City → compras → casino)
 bundle.js                script inline extraído del HTML original (solo para auditoría/tests)
 BRIEF.md                 especificación original del proyecto

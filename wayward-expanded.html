@@ -887,7 +887,7 @@ Paths are keys joined by dots. "wife." is her; anything else starts at the game 
   function defaultWexp() {
     return {
       v: WEXP_VERSION,
-      city: { inside: false, arrivedSlot: 0 },
+      city: { inside: false, arrivedSlot: 0, screen: 'village', companion: null },
       shops: {},                       /* per-shop: {stock:{}, restockDay, refusals, sessionDiscount, haggleTried} */
       outings: { cooldown: {}, bond: 20, history: [] },
       friend: null,                    /* {name, archetype, relation} — persists per save */
@@ -915,6 +915,7 @@ Paths are keys joined by dots. "wife." is her; anything else starts at the game 
     var k;
     for (k in d) if (!(k in w)) { w[k] = d[k]; changed = true; }
     for (k in d.businesses) if (!w.businesses[k]) { w.businesses[k] = d.businesses[k]; changed = true; }
+    if (w.city) { for (k in d.city) if (!(k in w.city)) { w.city[k] = d.city[k]; changed = true; } }
     var c = w.businesses.casino;
     for (k in d.businesses.casino) if (!(k in c)) { c[k] = d.businesses.casino[k]; changed = true; }
     for (k in d.outings) if (!(k in w.outings)) { w.outings[k] = d.outings[k]; changed = true; }
@@ -955,22 +956,36 @@ Paths are keys joined by dots. "wife." is her; anything else starts at the game 
     var s = rawState(); if (!s) return;
     var g = canGoCity(s);
     if (!g.ok) { alertInline(g.why); return; }
+    if (s.wexp && s.wexp.city && s.wexp.city.inside) { nav('village'); return; }
     edit(function (st) {
       ensureWexp(st);
       st.wexp.city.inside = true;
       st.wexp.city.arrivedSlot = st.slot;
+      st.wexp.city.screen = 'village';
       logLine(st, 'You walk down the lane into town. (' + hhmm(st.slot) + ')');
     });
-    openVillage();
+    focusHousePane();
+    rerender();
   }
   function leaveCity(silent) {
     edit(function (st) {
       ensureWexp(st);
       if (!st.wexp.city.inside) return;
       st.wexp.city.inside = false;
+      st.wexp.city.companion = null;
+      st.wexp.city.screen = 'village';
       if (!silent) logLine(st, 'You head back up the lane to the tavern. (' + hhmm(st.slot) + ')');
     });
-    closeOverlay();
+    if (overlayEl) overlayEl.style.display = 'none';
+    hideTownPanel();
+    if (actionsEl) { try { actionsEl.remove(); } catch (e) { } actionsEl = null; }
+  }
+  function focusHousePane() {
+    var btns = document.querySelectorAll('button');
+    for (var i = 0; i < btns.length; i++) {
+      var t = (btns[i].textContent || '').trim().toLowerCase();
+      if ((t === 'house' || t === 'village') && isTabButton(btns[i])) { btns[i].click(); return; }
+    }
   }
 
   /* ================= 5. Shops ================= */
@@ -2045,8 +2060,8 @@ Paths are keys joined by dots. "wife." is her; anything else starts at the game 
     });
   }
 
-  /* ================= 10. UI — overlay framework ================= */
-  var overlayEl = null, overlayContent = null, currentScreen = null, screenArg = null;
+  /* ================= 10. UI — Village panel inside the House pane, actions in Actions pane ================= */
+  var overlayEl = null, overlayContent = null;
 
   function ensureOverlay() {
     if (overlayEl && document.body.contains(overlayEl)) return;
@@ -2055,14 +2070,15 @@ Paths are keys joined by dots. "wife." is her; anything else starts at the game 
     overlayEl.className = 'fixed inset-0 z-50 flex items-center justify-center bg-black/70 px-4';
     overlayEl.style.display = 'none';
     overlayContent = document.createElement('div');
-    overlayContent.className = 'w-full max-w-3xl max-h-[88dvh] flex flex-col bg-stone-900 border border-stone-700 rounded-lg shadow-2xl';
+    overlayContent.className = 'w-full max-w-3xl flex flex-col bg-stone-900 border border-stone-700 rounded-lg shadow-2xl';
+    overlayContent.style.maxHeight = '88dvh';
     overlayContent.addEventListener('click', function (e) { e.stopPropagation(); });
     overlayEl.appendChild(overlayContent);
     document.body.appendChild(overlayEl);
     overlayEl.addEventListener('click', function () { closeOverlay(); });
   }
-  function closeOverlay() { if (overlayEl) overlayEl.style.display = 'none'; currentScreen = null; screenArg = null; }
-  function openOverlay(builder) { ensureOverlay(); currentScreen = builder.id; screenArg = builder.arg || null; builder.render(overlayContent); overlayEl.style.display = 'flex'; }
+  function closeOverlay() { if (overlayEl) overlayEl.style.display = 'none'; }
+  function openOverlay(builder) { ensureOverlay(); builder.render(overlayContent); overlayEl.style.display = 'flex'; }
 
   function el(tag, cls, html) {
     var e = document.createElement(tag);
@@ -2082,329 +2098,418 @@ Paths are keys joined by dots. "wife." is her; anything else starts at the game 
     b.addEventListener('click', onClick);
     return b;
   }
-  function money(n) { return '<span class="text-amber-400">' + esc(Math.round(n * 10) / 10) + 'g</span>'; }
-
-  function renderShell(root, title, subtitle, bodyBuilder, footer) {
-    root.innerHTML = '';
-    var head = el('div', 'flex items-center justify-between px-5 py-4 border-b border-stone-800 shrink-0',
-      '<h2 class="text-lg font-semibold text-stone-100">' + esc(title) + '</h2><div class="flex items-center gap-3">' + (subtitle || '') + '</div>');
-    var closeB = el('button', 'text-stone-400 hover:text-stone-200 text-xl leading-none px-2', '&times;');
-    closeB.addEventListener('click', function (e) { e.stopPropagation(); closeOverlay(); });
-    head.querySelector('div').appendChild(closeB);
-    var body = el('div', 'overflow-y-auto px-5 py-4 space-y-3');
-    bodyBuilder(body);
-    root.appendChild(head);
-    root.appendChild(body);
-    if (footer) {
-      var foot = el('div', 'px-5 py-3 border-t border-stone-800 shrink-0 flex items-center justify-between gap-2');
-      footer(foot);
-      root.appendChild(foot);
-    }
+  function smallBtn(label, onClick, opts) {
+    opts = opts || {};
+    var b = el('button', 'px-2 py-0.5 rounded text-[0.65rem] border ' +
+      (opts.primary ? 'bg-amber-700 border-amber-600 text-stone-100 hover:bg-amber-600' : 'bg-stone-800 border-stone-700 text-stone-300 hover:bg-stone-700') +
+      (opts.dim ? ' opacity-60' : ''));
+    b.innerHTML = label;
+    if (opts.title) b.title = opts.title;
+    b.addEventListener('click', function (e) { e.stopPropagation(); onClick(); });
+    return b;
   }
   function goldBadge() {
     var s = rawState();
-    return '<span class="text-sm text-amber-400">' + esc(s && s.economy ? Math.floor(s.economy.gold) : 0) + 'g</span>';
+    return esc(s && s.economy ? Math.floor(s.economy.gold) : 0) + 'g';
   }
   function timeBadge() {
     var s = rawState();
-    return '<span class="text-sm text-stone-300">Day ' + dayOf(s.slot) + ' · ' + hhmm(s.slot) + '</span>';
+    return s ? ('Day ' + dayOf(s.slot) + ' \u00b7 ' + hhmm(s.slot)) : '';
   }
-  function backBar(fn, label) {
-    var d = el('div', 'flex gap-2');
-    d.appendChild(btn(label || '← Back', '', function () { fn(); }, {}));
+
+  /* ---------- screen state (lives in wexp.city.screen, survives reloads) ---------- */
+  function cityOf(s) { return (s && s.wexp && s.wexp.city) || { inside: false, screen: 'village', companion: null }; }
+  function scrRaw(s) { var c = cityOf(s); return c.screen || 'village'; }
+  function scrKind(s) { var sc = scrRaw(s); var i = sc.indexOf(':'); return i < 0 ? sc : sc.slice(0, i); }
+  function scrArg(s) { var sc = scrRaw(s); var i = sc.indexOf(':'); return i < 0 ? null : sc.slice(i + 1); }
+  function nav(screen) {
+    edit(function (st) {
+      ensureWexp(st);
+      st.wexp.city.screen = screen;
+      if (screen && screen.indexOf('shop:') === 0) { var d = SHOP_BY_ID[screen.slice(5)]; if (d) restock(st, d); }
+    });
+    rerender();
+  }
+  function rerender() {
+    var s = rawState(); if (!s) return;
+    ensureWexp(s);
+    if (!s.wexp || !s.wexp.city || !s.wexp.city.inside) { hideTownPanel(); if (actionsEl) actionsEl.innerHTML = ''; if (overlayEl) overlayEl.style.display = 'none'; return; }
+    if (!renderTownPanel()) renderTownOverlay();
+    renderTownActions();
+  }
+
+  /* ---------- the panel: absolutely positioned over the house map, React-safe ---------- */
+  var panelEl = null, actionsEl = null;
+  function houseWrapper() {
+    var fold = document.querySelector('button[title="Fold the map"]');
+    if (!fold) return null;
+    var rootX8 = fold.closest ? fold.closest('.flex.flex-col.h-full.min-h-0') : null;
+    var wrap = rootX8 ? rootX8.parentElement : fold.parentElement;
+    if (!wrap || wrap === document.body) return null;
+    return wrap;
+  }
+  function ensureTownPanel() {
+    var wrap = houseWrapper();
+    if (!wrap) return null;
+    if (panelEl && wrap.contains(panelEl)) return panelEl;
+    hideTownPanel();
+    panelEl = document.createElement('div');
+    panelEl.id = 'wexp-town-panel';
+    panelEl.setAttribute('data-wexp', 'town-panel');
+    panelEl.style.cssText = 'position:absolute;top:0;left:0;right:0;bottom:0;overflow-y:auto;background:#1c1917;padding:0.5rem;z-index:5;';
+    wrap.style.position = 'relative';
+    wrap.appendChild(panelEl);
+    return panelEl;
+  }
+  function hideTownPanel() { if (panelEl) { try { panelEl.remove(); } catch (e) { } panelEl = null; } }
+
+  /* ---------- the Actions pane container: trails the game's own buttons ---------- */
+  function ensureTownActions() {
+    var btns = document.querySelectorAll('button');
+    var goOut = null, i;
+    for (i = 0; i < btns.length; i++) {
+      if (btns[i].getAttribute('data-wexp')) continue;
+      var t = btns[i].textContent || '';
+      if (t.indexOf('Go out') >= 0 && !btns[i].disabled) { goOut = btns[i]; break; }
+    }
+    if (!goOut) { if (actionsEl) { try { actionsEl.remove(); } catch (e) { } actionsEl = null; } return null; }
+    var parent = goOut.parentElement;
+    if (!parent) return null;
+    if (actionsEl && actionsEl.parentElement === parent) return actionsEl;
+    if (actionsEl) { try { actionsEl.remove(); } catch (e) { } }
+    actionsEl = document.createElement('div');
+    actionsEl.id = 'wexp-town-actions';
+    actionsEl.setAttribute('data-wexp', 'town-actions');
+    actionsEl.className = 'space-y-2 mt-2';
+    parent.appendChild(actionsEl);
+    return actionsEl;
+  }
+
+  /* ---------- shared small pieces ---------- */
+  function sectionLabel(text) { return el('div', 'mt-1.5 pt-1.5 border-t border-stone-800 text-[0.55rem] uppercase tracking-widest text-stone-700 mb-1', esc(text)); }
+  function chip(inner, tone) {
+    var tones = {
+      open: 'bg-amber-950/60 border-amber-900/70 text-amber-200',
+      dim: 'bg-stone-800 border-stone-700 text-stone-400',
+      here: 'bg-blue-900/60 border-blue-700 text-blue-200',
+      warn: 'bg-rose-950/60 border-rose-900 text-rose-300'
+    };
+    return '<span class="px-1 py-0 rounded border text-[0.65rem] ' + (tones[tone] || tones.dim) + '">' + esc(inner) + '</span>';
+  }
+  function locCard(opts) {
+    var cls = 'p-1.5 rounded border text-xs leading-tight min-w-0 flex-1 ';
+    if (opts.here) cls += 'border-blue-700 bg-stone-800';
+    else if (opts.dim) cls += 'border-dashed border-stone-800 bg-stone-900/30';
+    else cls += 'border-stone-800 bg-stone-900/40';
+    if (opts.onClick) cls += ' cursor-pointer hover:brightness-125 hover:ring-1 hover:ring-amber-700/70 transition';
+    var card = el('div', cls);
+    var head = el('div', 'text-[0.65rem] uppercase tracking-wider text-stone-500 mb-0.5 flex items-center justify-between gap-1 flex-wrap',
+      '<span>' + esc(opts.title) + '</span>' + (opts.chip || ''));
+    card.appendChild(head);
+    if (opts.body) card.appendChild(el('div', 'text-[0.7rem] ' + (opts.dim ? 'text-stone-600 italic' : 'text-stone-400'), opts.body));
+    if (opts.onClick) card.addEventListener('click', opts.onClick);
+    return card;
+  }
+  function moodLabel(v) { return v > 80 ? 'happy' : v > 60 ? 'content' : v > 35 ? 'okay' : v > 15 ? 'unhappy' : 'miserable'; }
+  function energyLabel(v) { return v > 80 ? 'fresh' : v > 55 ? 'steady' : v > 30 ? 'tired' : 'spent'; }
+  function statOr(char, k, dflt) { return char && char.stats && char.stats[k] != null ? Math.round(char.stats[k]) : dflt; }
+  function companionOf(s) {
+    var id = s.wexp.city.companion;
+    if (!id) return null;
+    if (id === 'wife') {
+      var w = wifeOf(s);
+      return w ? { id: 'wife', name: w.name, label: 'your wife', mood: statOr(w, 'mood', 60), energy: statOr(w, 'energy', 70) } : null;
+    }
+    var e = s.wexp.employees[id];
+    return e ? { id: id, name: e.name, label: ROLE_BY_ID[e.role] ? ROLE_BY_ID[e.role].label : e.role, mood: e.morale != null ? e.morale : 60, energy: e.energy != null ? e.energy : 70 } : null;
+  }
+  function setCompanion(id) {
+    edit(function (st) {
+      ensureWexp(st);
+      st.wexp.city.companion = id || null;
+      if (id === 'wife') logLine(st, wifeName(st) + ' takes your arm and you step out together.');
+      else if (id && st.wexp.employees[id]) logLine(st, 'You head out with ' + st.wexp.employees[id].name + '.');
+      else if (!id) logLine(st, 'You go your own way for a while.');
+    });
+    rerender();
+  }
+  function companionStrip(s) {
+    var c = companionOf(s);
+    if (!c) return null;
+    var d = el('div', 'mb-1.5 p-1.5 rounded border border-stone-800 bg-stone-900/60 text-xs leading-tight');
+    d.innerHTML = '<div class="flex items-center justify-between gap-2 flex-wrap">' +
+      '<span class="text-[0.7rem] text-stone-200">' + esc(c.name) + ' <span class="text-stone-500">\u00b7 ' + esc(c.label) + '</span></span>' +
+      '<span class="flex gap-1 flex-wrap">' + chip('mood: ' + moodLabel(c.mood), 'here') + chip('energy: ' + energyLabel(c.energy), 'dim') + '</span></div>';
     return d;
   }
 
-  /* ---------- Village main ---------- */
-  function openVillage() {
-    openOverlay({ id: 'village', arg: null, render: renderVillage });
+  /* ---------- panel frame + screen dispatch ---------- */
+  function screenTitle(s) {
+    var kind = scrKind(s), arg = scrArg(s);
+    if (kind === 'shop' && SHOP_BY_ID[arg]) return SHOP_BY_ID[arg].name;
+    if (kind === 'friend') { var f = s.wexp.friend || ensureFriend(s); return f.name + "'s home"; }
+    if (kind === 'outing' && OUTING_BY_ID[arg]) return OUTING_BY_ID[arg].name;
+    if (kind === 'hiring') return 'Hiring Hall';
+    if (kind === 'ledger') return 'The Gilded Lantern \u2014 ledger';
+    if (kind === 'casino_buy') return 'The Gilded Lantern \u2014 for sale';
+    if (kind === 'game' && casinoRoom(arg)) return casinoRoom(arg).name + ' \u2014 play a hand';
+    if (kind === 'casino' && s.wexp.businesses.casino.owned) return s.wexp.businesses.casino.name;
+    return 'Village \u2014 Whisperwood';
   }
-  function renderVillage(root) {
-    renderShell(root, 'Village — Whisperwood', timeBadge() + ' ' + goldBadge(), function (body) {
-      var s = rawState(); ensureWexp(s);
-      var w = s.wexp;
-      var outside = !w.city.inside;
-      var warn = el('div', 'text-xs text-stone-400 italic', outside
-        ? 'You are viewing the town from the tavern. Use “Visit City” to spend an afternoon there.'
-        : 'You are in town. Time passes as you visit places. “Return home” ends the trip.');
-      body.appendChild(warn);
+  function backTarget(s) {
+    var kind = scrKind(s);
+    if (kind === 'ledger') return 'casino';
+    return kind === 'village' ? null : 'village';
+  }
+  function renderTownPanel() {
+    var pane = ensureTownPanel();
+    if (!pane) return false;
+    var s = rawState(); ensureWexp(s);
+    pane.innerHTML = '';
+    var kind = scrKind(s), arg = scrArg(s), back = backTarget(s);
 
-      var tabs = el('div', 'flex gap-2 border-b border-stone-800 pb-2');
-      ['places', 'hiring'].concat(w.businesses.casino.owned ? ['casino'] : []).forEach(function (t) {
-        var b = el('button', 'px-3 py-1 rounded text-sm ' + (screenArg === t ? 'bg-amber-700 text-stone-100' : 'bg-stone-800 text-stone-300 hover:bg-stone-700'),
-          t === 'places' ? 'Destinations' : t === 'hiring' ? 'Hiring Hall' : 'The Gilded Lantern');
-        b.addEventListener('click', function () { openOverlay({ id: 'village', arg: t, render: renderVillage }); });
-        tabs.appendChild(b);
-      });
-      body.appendChild(tabs);
+    var head = el('div', 'flex items-baseline justify-between gap-2 mb-1.5 px-1 flex-wrap');
+    head.appendChild(el('div', 'min-w-0',
+      '<div class="text-[0.62rem] font-semibold uppercase tracking-widest text-amber-400">' + esc(screenTitle(s)) + '</div>' +
+      '<div class="text-[0.65rem] text-stone-500">' + timeBadge() + ' \u00b7 ' + goldBadge() + '</div>'));
+    var right = el('div', 'flex gap-1 shrink-0');
+    if (back) right.appendChild(smallBtn('\u2190 ' + (back === 'casino' ? 'The Lantern' : 'Village'), function () { nav(back); }));
+    right.appendChild(smallBtn('Head home \u2302', function () { leaveCity(); }, { title: 'End the town trip' }));
+    head.appendChild(right);
+    pane.appendChild(head);
 
-      var pane = el('div', 'space-y-2');
-      body.appendChild(pane);
-      var tab = screenArg || 'places';
-      if (tab === 'places') renderPlacesPane(pane, s);
-      else if (tab === 'hiring') renderHiringPane(pane, s);
-      else if (tab === 'casino') renderCasinoPane(pane, s);
-    }, function (foot) {
-      var s = rawState(); ensureWexp(s);
-      if (s.wexp.city.inside) {
-        foot.appendChild(btn('Return home', 'End the town trip', function () { leaveCity(); }, { primary: true }));
-      } else {
-        foot.appendChild(btn('Visit City', 'Walk into town (opens this panel on arrival)', function () { startCityVisit(); }, { primary: true }));
-        foot.appendChild(btn('Home', 'Back to the tavern rooms & occupants', function () { goHome(); }));
-      }
-    });
+    var strip = companionStrip(s);
+    if (strip) pane.appendChild(strip);
+
+    var body = el('div', 'space-y-1.5');
+    pane.appendChild(body);
+    if (kind === 'shop') vbShop(body, s, arg);
+    else if (kind === 'friend') vbFriend(body, s);
+    else if (kind === 'outing') vbOuting(body, s, arg);
+    else if (kind === 'hiring') vbHiring(body, s);
+    else if (kind === 'casino') vbCasino(body, s);
+    else if (kind === 'casino_buy') vbCasinoBuy(body, s);
+    else if (kind === 'ledger') vbLedger(body, s);
+    else if (kind === 'game') vbGame(body, s, arg);
+    else vbVillage(body, s);
+    return true;
   }
-  function goHome() {
-    closeOverlay();
-    var btns = document.querySelectorAll('button');
-    for (var i = 0; i < btns.length; i++) {
-      if (btns[i].getAttribute('data-wexp-tab') === 'house' || (btns[i].textContent.trim() === 'House' && isTabButton(btns[i]))) {
-        interceptOff = true;
-        btns[i].click();
-        setTimeout(function () { interceptOff = false; }, 120);
-        return;
-      }
-    }
+
+  /* ---------- Actions pane content (character verbs) ---------- */
+  function renderTownActions() {
+    var c = ensureTownActions();
+    if (!c) return;
+    var s = rawState(); ensureWexp(s);
+    c.innerHTML = '';
+    if (!s.wexp || !s.wexp.city || !s.wexp.city.inside) return;
+    var kind = scrKind(s), arg = scrArg(s);
+    if (kind === 'shop') abShop(c, s, arg);
+    else if (kind === 'friend') abFriend(c, s);
+    else if (kind === 'outing') abOuting(c, s, arg);
+    else if (kind === 'hiring') abHiring(c, s);
+    else if (kind === 'casino') abCasino(c, s);
+    else if (kind === 'casino_buy') abCasinoBuy(c, s);
+    else if (kind === 'ledger') abLedger(c, s);
+    else if (kind === 'game') abGame(c, s, arg);
+    else abVillage(c, s);
+    var back = backTarget(s);
+    if (back) c.appendChild(btn('\u2190 ' + (back === 'casino' ? 'The Lantern' : 'Village'), 'Back to the village map', function () { nav(back); }));
+    c.appendChild(btn('Head home', 'End the town trip and walk back up the lane', function () { leaveCity(); }, { primary: !back }));
   }
-  function renderPlacesPane(pane, s) {
-    var w = s.wexp, day = dayOf(s.slot);
+
+  /* ================= Village map (rooms-style cards) ================= */
+  function vbVillage(body, s) {
+    var w = s.wexp, day = dayOf(s.slot), renown = (s.tavernReputation && s.tavernReputation.renown) || 0;
+    body.appendChild(sectionLabel('Shops & traders'));
+    var grid = el('div', 'flex flex-wrap gap-1.5');
+    body.appendChild(grid);
     SHOP_DEFS.forEach(function (def) {
       if (def.id === 'clothier') return;
       var open = openNow(s.slot, def.hours);
-      var card = el('div', 'bg-stone-800 hover:bg-stone-700 border border-stone-700 rounded-lg px-4 py-3 cursor-pointer transition-colors');
-      var rep = def.renownGate && ((s.tavernReputation && s.tavernReputation.renown) || 0) < def.renownGate;
-      card.innerHTML = '<div class="flex justify-between items-baseline"><span class="text-sm font-medium text-stone-100">' + esc(def.name) + '</span>' +
-        '<span class="text-xs ' + (open ? 'text-green-400' : 'text-stone-500') + '">' + (open ? 'open' : 'closed · ' + hoursText(def.hours)) + '</span></div>' +
-        '<div class="text-xs text-stone-400 mt-0.5">' + esc(def.desc) + '</div>';
-      if (def.id === 'apothecary' && rep) card.innerHTML += '<div class="text-xs text-amber-500 mt-1">Cybil serves strangers with renown only — come back when the tavern is better known.</div>';
-      card.addEventListener('click', function () {
-        if (def.renownGate && ((s.tavernReputation && s.tavernReputation.renown) || 0) < def.renownGate) return;
-        openOverlay({ id: 'shop', arg: def.id, render: renderShop });
+      var gated = def.renownGate && renown < def.renownGate;
+      var here = scrKind(s) === 'shop' && scrArg(s) === def.id;
+      var card = locCard({
+        title: def.name,
+        chip: gated ? chip('renown ' + def.renownGate + ' needed', 'warn') : (open ? chip('open', 'open') : chip('closed \u00b7 ' + hoursText(def.hours), 'dim')),
+        body: open ? esc(def.desc) : esc(def.desc),
+        dim: !open || gated,
+        here: here,
+        onClick: function () {
+          if (gated) { alertInline('Cybil serves strangers with renown only \u2014 come back when the tavern is better known.'); return; }
+          nav('shop:' + def.id);
+        }
       });
-      pane.appendChild(card);
+      grid.appendChild(card);
     });
+    var clothier = locCard({
+      title: "The Clothier's Shop",
+      chip: chip('via Go out\u2026', 'dim'),
+      body: 'Outfits, try-ons and fittings \u2014 use <span class="text-stone-300">Go out\u2026 \u2192 Visit the clothier</span>. The fitting mirror is worth the walk.'
+    });
+    grid.appendChild(clothier);
 
-    var clothier = el('div', 'bg-stone-800 border border-stone-700 rounded-lg px-4 py-3');
-    clothier.innerHTML = '<div class="flex justify-between items-baseline"><span class="text-sm font-medium text-stone-100">The Clothier\'s Shop</span>' +
-      '<span class="text-xs text-stone-500">via Go out…</span></div>' +
-      '<div class="text-xs text-stone-400 mt-0.5">Outfits, try-ons and fittings. Use “Go out… → Visit the clothier” with her — the fitting mirror is worth the walk.</div>';
-    pane.appendChild(clothier);
-
-    var f = s.wexp.friend || ensureFriend(s);
-    var fCard = el('div', 'bg-stone-800 hover:bg-stone-700 border border-stone-700 rounded-lg px-4 py-3 cursor-pointer transition-colors');
+    body.appendChild(sectionLabel("Out & about \u2014 with " + wifeName(s)));
+    var grid2 = el('div', 'flex flex-wrap gap-1.5');
+    body.appendChild(grid2);
+    var f = w.friend || ensureFriend(s);
     var fDone = w.outings.cooldown['friend'] != null && w.outings.cooldown['friend'] >= day;
-    fCard.innerHTML = '<div class="flex justify-between items-baseline"><span class="text-sm font-medium text-stone-100">' + esc(f.name) + '\'s home</span>' +
-      '<span class="text-xs ' + (fDone ? 'text-stone-500' : 'text-green-400') + '">' + (fDone ? 'visited today' : 'ready for a call') + '</span></div>' +
-      '<div class="text-xs text-stone-400 mt-0.5">' + esc(f.relation) + ' — ' + esc(f.homeName) + '</div>';
-    fCard.addEventListener('click', function () { openOverlay({ id: 'friend', arg: null, render: renderFriend }); });
-    pane.appendChild(fCard);
-
+    grid2.appendChild(locCard({
+      title: f.name + "'s home",
+      chip: fDone ? chip('visited today', 'dim') : chip('ready for a call', 'open'),
+      body: esc(f.relation) + ' \u2014 ' + esc(f.homeName),
+      here: scrKind(s) === 'friend',
+      onClick: function () { nav('friend'); }
+    }));
     OUTINGS.forEach(function (o) {
       var done = w.outings.cooldown[o.id] != null && w.outings.cooldown[o.id] >= day;
-      var card = el('div', 'bg-stone-800 hover:bg-stone-700 border border-stone-700 rounded-lg px-4 py-3 cursor-pointer transition-colors');
-      card.innerHTML = '<div class="flex justify-between items-baseline"><span class="text-sm font-medium text-stone-100">' + esc(o.name) + ' <span class="text-stone-500 text-xs">· with ' + esc(wifeName(s)) + '</span></span>' +
-        '<span class="text-xs ' + (done ? 'text-stone-500' : 'text-green-400') + '">' + (done ? 'been today' : 'open · ' + hoursText(o.hours)) + '</span></div>' +
-        '<div class="text-xs text-stone-400 mt-0.5">' + esc(o.desc) + '</div>';
-      card.addEventListener('click', function () { openOverlay({ id: 'outing', arg: o.id, render: renderOuting }); });
-      pane.appendChild(card);
+      grid2.appendChild(locCard({
+        title: o.name,
+        chip: done ? chip('been today', 'dim') : chip('open \u00b7 ' + hoursText(o.hours), 'open'),
+        body: esc(o.desc) + ' <span class="text-stone-500">with ' + esc(wifeName(s)) + '</span>',
+        here: scrKind(s) === 'outing' && scrArg(s) === o.id,
+        onClick: function () { openOuting(o.id); }
+      }));
     });
 
-    if (!w.businesses.casino.owned) {
-      var c = w.businesses.casino;
-      var card = el('div', 'bg-stone-800 hover:bg-stone-700 border border-amber-700/60 rounded-lg px-4 py-3 cursor-pointer transition-colors');
-      card.innerHTML = '<div class="flex justify-between items-baseline"><span class="text-sm font-medium text-amber-300">The Gilded Lantern — derelict casino</span>' +
-        '<span class="text-xs text-stone-400">' + CASINO_PRICE + 'g</span></div>' +
-        '<div class="text-xs text-stone-400 mt-0.5">A burned-out gambling house by the east gate. The agent\'s board promises "three floors of fortune". Restoration would be a project of years — and thousands.</div>';
-      card.addEventListener('click', function () { openOverlay({ id: 'casino_buy', arg: null, render: renderCasinoBuy }); });
-      pane.appendChild(card);
+    body.appendChild(sectionLabel('Town business'));
+    var grid3 = el('div', 'flex flex-wrap gap-1.5');
+    body.appendChild(grid3);
+    grid3.appendChild(locCard({
+      title: 'Hiring Hall',
+      chip: chip(w.staff.candidates.length + ' looking for work', 'dim'),
+      body: 'Hire hands for the tavern or the Lantern. The pool turns over about once a week.',
+      here: scrKind(s) === 'hiring',
+      onClick: function () { nav('hiring'); }
+    }));
+    var c = w.businesses.casino;
+    grid3.appendChild(locCard({
+      title: c.name,
+      chip: c.owned ? chip('yours \u00b7 treasury ' + Math.floor(c.treasury) + 'g', 'open') : chip('derelict \u00b7 ' + CASINO_PRICE + 'g', 'warn'),
+      body: c.owned
+        ? 'Three gaming rooms, the stage, the private lounge, hotel floors and the cellar vault.'
+        : 'A burned-out gambling house by the east gate. The agent\u2019s board promises \u201cthree floors of fortune\u201d.',
+      dim: !c.owned,
+      here: scrKind(s) === 'casino' || scrKind(s) === 'casino_buy' || scrKind(s) === 'game' || scrKind(s) === 'ledger',
+      onClick: function () { nav(c.owned ? 'casino' : 'casino_buy'); }
+    }));
+  }
+  function openOuting(id) {
+    var s = rawState();
+    if (s && s.wexp && s.wexp.city && s.wexp.city.companion == null) setCompanion('wife');
+    nav('outing:' + id);
+  }
+  function abVillage(c, s) {
+    var comp = companionOf(s);
+    if (comp) {
+      c.appendChild(btn('Part ways \u2014 ' + comp.name + ' heads back', 'Walk the rest alone', function () { setCompanion(null); }));
+    } else {
+      c.appendChild(btn('Walk with ' + wifeName(s), 'Ask her to come along', function () { setCompanion('wife'); }));
+      var ids = Object.keys(s.wexp.employees || {}).slice(0, 3);
+      ids.forEach(function (id) {
+        var e = s.wexp.employees[id];
+        c.appendChild(btn('Take ' + e.name + ' along', ROLE_BY_ID[e.role] ? ROLE_BY_ID[e.role].label : '', function () { setCompanion(id); }));
+      });
     }
   }
 
-  /* ---------- Shop screen ---------- */
-  function renderShop(root) {
-    var shopId = screenArg || 'herbalist';
+  /* ================= Shop screens ================= */
+  function vbShop(body, s, shopId) {
     var def = SHOP_BY_ID[shopId];
-    edit(function (st) { ensureWexp(st); restock(st, def); });
-    renderShell(root, def.name, goldBadge(), function (body) {
-      var s = rawState(); ensureWexp(s);
-      if (!openNow(s.slot, def.hours)) {
-        body.appendChild(el('div', 'bg-stone-800 border border-stone-700 rounded-lg px-4 py-3 text-sm text-stone-300',
-          esc(def.vendor) + "'s shutters are closed. Hours: " + hoursText(def.hours) + '.'));
-        body.appendChild(backBar(function () { openVillageTab('places'); }));
-        return;
-      }
-      body.appendChild(el('div', 'text-xs text-stone-400 italic', esc(def.blurb()) + ' — ' + esc(def.vendor) + ', ' + hoursText(def.hours)));
-      var ss = s.wexp.shops[shopId];
-      if (ss && ss.sessionDiscount < 1) body.appendChild(el('div', 'text-xs text-green-400', 'A haggled price holds for this visit (−' + Math.round((1 - ss.sessionDiscount) * 100) + '%).'));
+    if (!def) { body.appendChild(el('div', 'text-sm text-stone-500', 'This shop is gone.')); return; }
+    var ss = s.wexp.shops[shopId];
+    body.appendChild(el('div', 'px-1 text-[0.7rem] text-stone-400 italic', esc(def.blurb()) + ' \u2014 ' + esc(def.vendor) + ', ' + hoursText(def.hours)));
+    if (ss && ss.sessionDiscount < 1) body.appendChild(el('div', 'px-1 text-[0.7rem] text-amber-300', 'A haggled price holds for this visit (\u2212' + Math.round((1 - ss.sessionDiscount) * 100) + '%).'));
 
-      var sell = el('h4', 'text-xs font-medium text-stone-400 uppercase tracking-wider mt-2 mb-1', 'For sale');
-      body.appendChild(sell);
-      var list = el('div', 'space-y-1');
-      body.appendChild(list);
-      var lines = shopLines(s, def);
-      if (!lines.length) list.appendChild(el('div', 'text-sm text-stone-500 px-2 py-2', 'Empty shelves today. Come back tomorrow.'));
-      lines.forEach(function (l) {
-        var row = el('div', 'bg-stone-800 border border-stone-700 rounded-lg px-3 py-2 flex items-center justify-between gap-2 flex-wrap');
-        var left = el('div', '', '<span class="text-sm text-stone-100">' + esc(l.name) + '</span><span class="text-xs text-stone-500 ml-2">×' + l.qty + '</span>');
-        var right = el('div', 'flex gap-1 items-center flex-wrap');
-        var buy1 = btn('Buy 1 · ' + l.price + 'g', '', function () { buyFromShop(shopId, l.key, 1); rerender(); }, { disabled: s.economy.gold < l.price });
-        right.appendChild(buy1);
-        l.bundles.forEach(function (b) {
-          var bb = btn((b.label || '×' + b.n) + ' · ' + b.total + 'g', '', function () { buyFromShop(shopId, l.key, b.n, b.total); rerender(); }, { disabled: s.economy.gold < b.total });
-          right.appendChild(bb);
-        });
-        row.appendChild(left); row.appendChild(right);
-        list.appendChild(row);
+    body.appendChild(sectionLabel('For sale'));
+    var lines = shopLines(s, def);
+    if (!lines.length) body.appendChild(el('div', 'px-2 py-1.5 rounded border border-dashed border-stone-800 bg-stone-900/30 text-[0.7rem] text-stone-600 italic', 'Empty shelves today. Come back tomorrow.'));
+    lines.forEach(function (l) {
+      var bundles = l.bundles.map(function (b) { return (b.label || '\u00d7' + b.n) + ' ' + b.total + 'g'; }).join(' \u00b7 ');
+      body.appendChild(el('div', 'px-2 py-1.5 rounded border border-stone-800 bg-stone-900/40 flex items-baseline justify-between gap-2 flex-wrap',
+        '<span class="text-[0.72rem] text-stone-200">' + esc(l.name) + ' <span class="text-stone-500">\u00d7' + l.qty + '</span></span>' +
+        '<span class="text-[0.7rem] text-stone-400">' + l.price + 'g each' + (bundles ? ' <span class="text-stone-500">\u00b7 ' + esc(bundles) + '</span>' : '') + '</span>'));
+    });
+
+    var sellables = playerSellables(s, def);
+    if (sellables.length) {
+      body.appendChild(sectionLabel('They buy from you'));
+      sellables.forEach(function (p) {
+        body.appendChild(el('div', 'px-2 py-1.5 rounded border border-stone-800 bg-stone-900/40 flex items-baseline justify-between gap-2',
+          '<span class="text-[0.72rem] text-stone-200">' + esc(p.name) + ' <span class="text-stone-500">you have ' + p.count + '</span></span>' +
+          '<span class="text-[0.7rem] text-amber-300">' + p.each + 'g each</span>'));
       });
+    }
 
-      var sellables = playerSellables(s, def);
-      if (sellables.length) {
-        body.appendChild(el('h4', 'text-xs font-medium text-stone-400 uppercase tracking-wider mt-4 mb-1', 'They buy from you'));
-        var sellList = el('div', 'space-y-1');
-        body.appendChild(sellList);
-        sellables.forEach(function (p) {
-          var row = el('div', 'bg-stone-800 border border-stone-700 rounded-lg px-3 py-2 flex items-center justify-between gap-2');
-          row.appendChild(el('div', '', '<span class="text-sm text-stone-100">' + esc(p.name) + '</span><span class="text-xs text-stone-500 ml-2">you have ' + p.count + '</span>'));
-          var right = el('div', 'flex gap-1');
-          right.appendChild(btn('Sell 1 · ' + p.each + 'g', '', function () { sellToShop(shopId, p.id, 1); rerender(); }));
-          if (p.count > 1) right.appendChild(btn('Sell all · ' + round1(p.each * p.count) + 'g', '', function () { sellToShop(shopId, p.id, p.count); rerender(); }));
-          row.appendChild(right);
-          sellList.appendChild(row);
-        });
-      }
+    var tried = ss && ss.haggleTried >= 2;
+    body.appendChild(el('div', 'px-1 mt-1 text-[0.65rem] text-stone-600', tried ? 'The vendor has heard enough haggling today.' : 'You could try to talk the prices down for this visit.'));
 
-      var hag = el('div', 'flex gap-2 mt-4');
-      var tried = ss && ss.haggleTried >= 2;
-      hag.appendChild(btn('Try to haggle', tried ? 'The vendor has heard enough today.' : 'Talk the prices down for this visit', function () { haggle(shopId); rerender(); }, { disabled: tried }));
-      body.appendChild(hag);
-      var recent = el('div', 'mt-3 bg-stone-950/60 border border-stone-800 rounded-lg px-3 py-2 text-xs text-stone-400 space-y-1');
-      var logs = (s.log || []).slice(-4);
-      logs.forEach(function (l) { recent.appendChild(el('div', '', '· ' + esc(l.text))); });
-      body.appendChild(recent);
-    }, function (foot) {
-      foot.appendChild(backBar(function () { openVillageTab('places'); }));
-      foot.appendChild(btn('Return home', 'End the town trip', function () { leaveCity(); }));
+    var recent = el('div', 'px-1 mt-1.5 text-[0.65rem] text-stone-600 space-y-0.5');
+    (s.log || []).slice(-3).forEach(function (l) { recent.appendChild(el('div', '', '\u00b7 ' + esc(l.text))); });
+    body.appendChild(recent);
+  }
+  function abShop(c, s, shopId) {
+    var def = SHOP_BY_ID[shopId];
+    if (!def) return;
+    if (!openNow(s.slot, def.hours)) {
+      c.appendChild(el('div', 'px-1 text-[0.7rem] text-stone-500 italic', esc(def.vendor) + "'s shutters are closed. Hours: " + hoursText(def.hours) + '.'));
+      return;
+    }
+    var lines = shopLines(s, def);
+    lines.forEach(function (l) {
+      c.appendChild(btn('Buy 1 \u00b7 ' + l.price + 'g', l.name + ' \u00b7 ' + l.qty + ' on the shelf', function () { buyFromShop(shopId, l.key, 1); rerender(); }, { disabled: s.economy.gold < l.price }));
+      l.bundles.forEach(function (b) {
+        c.appendChild(btn((b.label || '\u00d7' + b.n) + ' \u00b7 ' + b.total + 'g', l.name, function () { buyFromShop(shopId, l.key, b.n, b.total); rerender(); }, { disabled: s.economy.gold < b.total }));
+      });
     });
-  }
-  function openVillageTab(t) { openOverlay({ id: 'village', arg: t, render: renderVillage }); }
-  function rerender() {
-    var builders = {
-      village: renderVillage, shop: renderShop, friend: renderFriend, outing: renderOuting,
-      hiring: null, casino: renderCasinoPane, casino_buy: renderCasinoBuy, game: renderGameScreen
-    };
-    if (currentScreen === 'village') openVillageTab(screenArg);
-    else if (currentScreen === 'shop') renderShop(overlayContent);
-    else if (currentScreen === 'friend') renderFriend(overlayContent);
-    else if (currentScreen === 'outing') renderOuting(overlayContent);
-    else if (currentScreen === 'casino') renderCasinoPane(overlayContent, rawState());
-    else if (currentScreen === 'casino_buy') renderCasinoBuy(overlayContent);
-    else if (currentScreen === 'ledger') renderLedger(overlayContent);
-    else if (currentScreen === 'game') renderGameScreen(overlayContent);
-  }
-
-  /* ---------- Friend screen ---------- */
-  function renderFriend(root) {
-    renderShell(root, 'A call on the friend', timeBadge() + ' ' + goldBadge(), function (body) {
-      var s = rawState(); ensureWexp(s);
-      var f = friendOf(s);
-      body.appendChild(el('div', 'text-sm text-stone-300', esc(f.name) + ' — ' + esc(f.relation) + '. Her home is ' + esc(f.homeName) + '.'));
-      var acts = el('div', 'space-y-2');
-      body.appendChild(acts);
-      acts.appendChild(btn('Stay for tea and talk', '50 min · costs nothing', function () { visitFriend('chat'); rerender(); }));
-      acts.appendChild(btn('Bring wine, stay for supper', '2 hrs · 6g · ' + wifeName(s) + ' lights up', function () { visitFriend('supper'); rerender(); }));
-      acts.appendChild(btn('Offer a hand around the house', '90 min · mending, carrying, small kindnesses', function () { visitFriend('help'); rerender(); }));
-    }, function (foot) {
-      foot.appendChild(backBar(function () { openVillageTab('places'); }));
-      foot.appendChild(btn('Return home', '', function () { leaveCity(); }));
+    var sellables = playerSellables(s, def);
+    sellables.forEach(function (p) {
+      c.appendChild(btn('Sell 1 \u00b7 ' + p.each + 'g', p.name + ' \u00b7 you have ' + p.count, function () { sellToShop(shopId, p.id, 1); rerender(); }));
+      if (p.count > 1) c.appendChild(btn('Sell all \u00b7 ' + round1(p.each * p.count) + 'g', p.name + ' \u00d7' + p.count, function () { sellToShop(shopId, p.id, p.count); rerender(); }));
     });
+    var ss = s.wexp.shops[shopId];
+    var tried = ss && ss.haggleTried >= 2;
+    c.appendChild(btn('Try to haggle', tried ? 'The vendor has heard enough today.' : 'Talk the prices down for this visit', function () { haggle(shopId); rerender(); }, { disabled: tried }));
   }
 
-  /* ---------- Outing screen ---------- */
-  function renderOuting(root) {
-    var outingId = screenArg || 'square';
+  /* ================= Friend screen ================= */
+  function vbFriend(body, s) {
+    var f = friendOf(s);
+    body.appendChild(el('div', 'px-1 text-[0.72rem] text-stone-300', esc(f.name) + ' \u2014 ' + esc(f.relation) + '. Her home is ' + esc(f.homeName) + '.'));
+    var recent = el('div', 'px-1 mt-1.5 text-[0.65rem] text-stone-600 space-y-0.5');
+    (s.log || []).slice(-3).forEach(function (l) { recent.appendChild(el('div', '', '\u00b7 ' + esc(l.text))); });
+    body.appendChild(recent);
+  }
+  function abFriend(c, s) {
+    c.appendChild(btn('Stay for tea and talk', '50 min \u00b7 costs nothing', function () { visitFriend('chat'); rerender(); }));
+    c.appendChild(btn('Bring wine, stay for supper', '2 hrs \u00b7 6g \u00b7 ' + wifeName(s) + ' lights up', function () { visitFriend('supper'); rerender(); }));
+    c.appendChild(btn('Offer a hand around the house', '90 min \u00b7 mending, carrying, small kindnesses', function () { visitFriend('help'); rerender(); }));
+  }
+
+  /* ================= Outing screens ================= */
+  function vbOuting(body, s, outingId) {
     var o = OUTING_BY_ID[outingId];
-    renderShell(root, o.name, timeBadge() + ' ' + goldBadge(), function (body) {
-      var s = rawState(); ensureWexp(s);
-      var w = wifeOf(s);
-      var mood = w ? Math.round(stat(w, 'mood')) : 60;
-      var moodLabel = mood > 80 ? 'happy' : mood > 60 ? 'content' : mood > 35 ? 'okay' : mood > 15 ? 'unhappy' : 'miserable';
-      body.appendChild(el('div', 'text-sm text-stone-300', esc(o.desc) + ' ' + esc(wifeName(s)) + ' is <span class="text-stone-100">' + esc(moodLabel) + '</span> today.'));
-      body.appendChild(el('div', 'text-xs text-stone-500', 'Your ease together: ' + s.wexp.outings.bond + '/100'));
-      var acts = el('div', 'space-y-2');
-      body.appendChild(acts);
-      o.actions.forEach(function (a) {
-        var cost = a.cost ? ' · ' + a.cost + 'g' : '';
-        var dis = (a.needMood != null && mood < a.needMood);
-        acts.appendChild(btn(a.label, a.mins + ' min' + cost, function () { doOuting(outingId, a.id); rerender(); }, { disabled: dis, primary: !!dis }));
-      });
-      var recent = el('div', 'mt-3 bg-stone-950/60 border border-stone-800 rounded-lg px-3 py-2 text-xs text-stone-400 space-y-1');
-      (s.log || []).slice(-4).forEach(function (l) { recent.appendChild(el('div', '', '· ' + esc(l.text))); });
-      body.appendChild(recent);
-    }, function (foot) {
-      foot.appendChild(backBar(function () { openVillageTab('places'); }));
-      foot.appendChild(btn('Return home', '', function () { leaveCity(); }));
+    if (!o) { body.appendChild(el('div', 'text-sm text-stone-500', 'That walk is closed off today.')); return; }
+    var w = wifeOf(s);
+    var mood = statOr(w, 'mood', 60);
+    body.appendChild(el('div', 'px-1 text-[0.72rem] text-stone-300', esc(o.desc) + ' ' + esc(wifeName(s)) + ' is <span class="text-stone-100">' + esc(moodLabel(mood)) + '</span> today.'));
+    body.appendChild(el('div', 'px-1 text-[0.7rem] text-stone-500', 'Your ease together: ' + s.wexp.outings.bond + '/100'));
+    var recent = el('div', 'px-1 mt-1.5 text-[0.65rem] text-stone-600 space-y-0.5');
+    (s.log || []).slice(-3).forEach(function (l) { recent.appendChild(el('div', '', '\u00b7 ' + esc(l.text))); });
+    body.appendChild(recent);
+  }
+  function abOuting(c, s, outingId) {
+    var o = OUTING_BY_ID[outingId];
+    if (!o) return;
+    var w = wifeOf(s);
+    var mood = statOr(w, 'mood', 60);
+    o.actions.forEach(function (a) {
+      var cost = a.cost ? ' \u00b7 ' + a.cost + 'g' : '';
+      var dis = (a.needMood != null && mood < a.needMood);
+      c.appendChild(btn(a.label, a.mins + ' min' + cost + (dis ? ' \u00b7 she is not in the mood' : ''), function () { doOuting(outingId, a.id); rerender(); }, { disabled: dis }));
     });
   }
 
-  /* ---------- Hiring Hall ---------- */
-  function renderHiringPane(pane, s) {
-    refreshCandidatesInEdit();
-    var w = s.wexp;
-    var note = el('div', 'text-xs text-stone-400', 'Candidates change about once a week. Hiring costs a signing wage; then payroll comes due every 7 days. A worker keeps one job at a time.');
-    pane.appendChild(note);
-    var hdr = el('h4', 'text-xs font-medium text-stone-400 uppercase tracking-wider mt-2 mb-1', 'Your people (' + Object.keys(w.employees).length + ')');
-    pane.appendChild(hdr);
-    var eIds = Object.keys(w.employees);
-    if (!eIds.length) pane.appendChild(el('div', 'text-sm text-stone-500 px-2 py-2', 'No one works for you yet.'));
-    eIds.forEach(function (id) {
-      var e = w.employees[id], role = ROLE_BY_ID[e.role];
-      var row = el('div', 'bg-stone-800 border border-stone-700 rounded-lg px-3 py-2');
-      row.innerHTML = '<div class="flex justify-between items-baseline"><span class="text-sm text-stone-100">' + esc(e.name) + ' <span class="text-stone-500 text-xs">· ' + e.age + '</span></span>' +
-        '<span class="text-xs text-stone-400">' + esc(role ? role.label : e.role) + ' · ' + esc(e.business === 'casino' ? w.businesses.casino.name : 'tavern') + ' · ' + e.wage + 'g/wk</span></div>' +
-        '<div class="text-xs text-stone-500 mt-0.5">' + esc(e.temperament) + ' · morale ' + e.morale + ' · ' + esc(skillSummary(e.skills)) + '</div>' +
-        (e.privateOk ? '<div class="text-xs text-stone-600 mt-0.5">Willing to take private bookings, on her own say-so each time.</div>' : '<div class="text-xs text-stone-600 mt-0.5">Will not take private bookings — keep her to the public floor.</div>');
-      var acts = el('div', 'flex gap-1 mt-1 flex-wrap');
-      ROLES.forEach(function (r) {
-        if (r.id === e.role) return;
-        if (r.biz.indexOf(e.business) < 0) return;
-        var b = el('button', 'px-2 py-0.5 rounded text-xs bg-stone-900 border border-stone-700 text-stone-300 hover:bg-stone-700', '→ ' + r.label.split(' /')[0]);
-        b.addEventListener('click', function () { assignEmployee(id, e.business, r.id); rerender(); });
-        acts.appendChild(b);
-      });
-      var fire = el('button', 'px-2 py-0.5 rounded text-xs bg-stone-900 border border-red-900/60 text-red-300 hover:bg-red-900/40', 'Dismiss');
-      fire.addEventListener('click', function () { dismissEmployee(id); rerender(); });
-      acts.appendChild(fire);
-      row.appendChild(acts);
-      pane.appendChild(row);
-    });
-
-    var hdr2 = el('h4', 'text-xs font-medium text-stone-400 uppercase tracking-wider mt-4 mb-1', 'Looking for work (' + w.staff.candidates.length + ')');
-    pane.appendChild(hdr2);
-    if (!w.staff.candidates.length) pane.appendChild(el('div', 'text-sm text-stone-500 px-2 py-2', 'Nobody new today. The pool refreshes weekly.'));
-    w.staff.candidates.forEach(function (c) {
-      var row = el('div', 'bg-stone-800 border border-stone-700 rounded-lg px-3 py-2');
-      row.innerHTML = '<div class="flex justify-between items-baseline"><span class="text-sm text-stone-100">' + esc(c.name) + ' <span class="text-stone-500 text-xs">· ' + c.age + '</span></span>' +
-        '<span class="text-xs text-amber-400/80">' + c.wage + 'g/wk expected</span></div>' +
-        '<div class="text-xs text-stone-500 mt-0.5">' + esc(c.background) + ' · ' + esc(c.temperament) + '</div>' +
-        '<div class="text-xs text-stone-400 mt-0.5">' + esc(skillSummary(c.skills)) + ' · ' + esc(attrSummary(c.attributes)) + '</div>';
-      var acts = el('div', 'flex gap-1 mt-1 flex-wrap');
-      ROLES.forEach(function (r) {
-        var b = el('button', 'px-2 py-0.5 rounded text-xs bg-stone-900 border border-stone-700 text-stone-300 hover:bg-stone-700', 'hire · ' + r.label.split(' /')[0]);
-        b.addEventListener('click', function () {
-          hireCandidate(c.id, 'tavern', r.id);
-          rerender();
-        });
-        if (r.biz.indexOf('casino') >= 0 && w.businesses.casino.owned) {
-          var b2 = el('button', 'px-2 py-0.5 rounded text-xs bg-stone-900 border border-amber-800 text-amber-300 hover:bg-stone-700', 'hire → Lantern');
-          b2.addEventListener('click', function () { hireCandidate(c.id, 'casino', r.id); rerender(); });
-          acts.appendChild(b2);
-        }
-        acts.appendChild(b);
-      });
-      row.appendChild(acts);
-      pane.appendChild(row);
-    });
-  }
+  /* ================= Hiring Hall ================= */
   function refreshCandidatesInEdit() { edit(function (s) { refreshCandidatesIfNeeded(s); }); }
   function skillSummary(sk) {
     var parts = [];
@@ -2415,131 +2520,155 @@ Paths are keys joined by dots. "wife." is her; anything else starts at the game 
     var best = ATTRS.slice().sort(function (a, b) { return (at[b] || 0) - (at[a] || 0); })[0];
     return 'best at ' + best;
   }
-
-  /* ---------- Casino buy screen ---------- */
-  function renderCasinoBuy(root) {
-    renderShell(root, 'The Gilded Lantern — for sale', goldBadge(), function (body) {
-      body.appendChild(el('div', 'text-sm text-stone-300', 'The agent unlocks the door with a shrug. Dust lies an inch thick on the gaming tables; chandeliers hang like dead spiders. Upstairs: three floors of guest rooms, water-stained. It wants a fortune and a stern will.'));
-      var plan = el('div', 'bg-stone-950/60 border border-stone-800 rounded-lg px-4 py-3 text-xs text-stone-400 space-y-1 mt-2');
-      plan.innerHTML = '<div class="text-stone-300 font-medium mb-1">Restoration plan (after purchase)</div>';
-      CASINO_ROOMS.concat(CASINO_GROUND, CASINO_BASEMENT, CASINO_FUN).forEach(function (r) {
-        plan.innerHTML += '<div>· ' + esc(r.name) + ' — ' + r.restoreCost + 'g</div>';
+  function vbHiring(body, s) {
+    refreshCandidatesInEdit();
+    s = rawState(); ensureWexp(s);
+    var w = s.wexp;
+    body.appendChild(el('div', 'px-1 text-[0.7rem] text-stone-400', 'Hiring costs a signing wage; then payroll comes due every 7 days. A worker keeps one job at a time.'));
+    body.appendChild(sectionLabel('Your people (' + Object.keys(w.employees).length + ')'));
+    var eIds = Object.keys(w.employees);
+    if (!eIds.length) body.appendChild(el('div', 'px-2 py-1.5 rounded border border-dashed border-stone-800 bg-stone-900/30 text-[0.7rem] text-stone-600 italic', 'No one works for you yet.'));
+    eIds.forEach(function (id) {
+      var e = w.employees[id], role = ROLE_BY_ID[e.role];
+      var row = el('div', 'px-2 py-1.5 rounded border border-stone-800 bg-stone-900/40');
+      row.innerHTML = '<div class="flex items-baseline justify-between gap-2 flex-wrap"><span class="text-[0.72rem] text-stone-200">' + esc(e.name) + ' <span class="text-stone-500">\u00b7 ' + e.age + '</span></span>' +
+        '<span class="text-[0.7rem] text-stone-400">' + esc(role ? role.label : e.role) + ' \u00b7 ' + esc(e.business === 'casino' ? w.businesses.casino.name : 'tavern') + ' \u00b7 ' + e.wage + 'g/wk</span></div>' +
+        '<div class="text-[0.65rem] text-stone-500 mt-0.5">' + esc(e.temperament) + ' \u00b7 morale ' + e.morale + ' \u00b7 ' + esc(skillSummary(e.skills)) + '</div>' +
+        (e.privateOk ? '<div class="text-[0.65rem] text-stone-600 mt-0.5">Willing to take private bookings, on her own say-so each time.</div>' : '<div class="text-[0.65rem] text-stone-600 mt-0.5">Will not take private bookings \u2014 keep her to the public floor.</div>');
+      var acts = el('div', 'flex gap-1 mt-1 flex-wrap');
+      ROLES.forEach(function (r) {
+        if (r.id === e.role) return;
+        if (r.biz.indexOf(e.business) < 0) return;
+        acts.appendChild(smallBtn('\u2192 ' + r.label.split(' /')[0], function () { assignEmployee(id, e.business, r.id); rerender(); }));
       });
-      plan.innerHTML += '<div>· 8 guest rooms — 400g each · The Lantern Suite — 1200g</div>';
-      plan.innerHTML += '<div class="text-stone-500 mt-1">Operating costs (staff wages, upkeep) recur nightly and weekly once open.</div>';
-      body.appendChild(plan);
-      var c = rawState().wexp.businesses.casino;
-      body.appendChild(btn('Buy the deed — ' + CASINO_PRICE + 'g', 'Includes the full fixed layout: basement, ground floor, three guest floors + suite. One guest room is serviceable on day one.', function () { purchaseCasino(); openVillageTab('casino'); }, { primary: rawState().economy.gold >= CASINO_PRICE, disabled: rawState().economy.gold < CASINO_PRICE }));
-    }, function (foot) {
-      foot.appendChild(backBar(function () { openVillageTab('places'); }));
+      var fire = el('button', 'px-2 py-0.5 rounded text-[0.65rem] border border-rose-900 bg-stone-900 text-rose-300 hover:bg-stone-800', 'Dismiss');
+      fire.addEventListener('click', function () { dismissEmployee(id); rerender(); });
+      acts.appendChild(fire);
+      row.appendChild(acts);
+      body.appendChild(row);
+    });
+    body.appendChild(sectionLabel('Looking for work (' + w.staff.candidates.length + ')'));
+    if (!w.staff.candidates.length) body.appendChild(el('div', 'px-2 py-1.5 rounded border border-dashed border-stone-800 bg-stone-900/30 text-[0.7rem] text-stone-600 italic', 'Nobody new today. The pool refreshes weekly.'));
+    w.staff.candidates.forEach(function (cd) {
+      var row = el('div', 'px-2 py-1.5 rounded border border-stone-800 bg-stone-900/40');
+      row.innerHTML = '<div class="flex items-baseline justify-between gap-2 flex-wrap"><span class="text-[0.72rem] text-stone-200">' + esc(cd.name) + ' <span class="text-stone-500">\u00b7 ' + cd.age + '</span></span>' +
+        '<span class="text-[0.7rem] text-amber-300">' + cd.wage + 'g/wk expected</span></div>' +
+        '<div class="text-[0.65rem] text-stone-500 mt-0.5">' + esc(cd.background) + ' \u00b7 ' + esc(cd.temperament) + '</div>' +
+        '<div class="text-[0.65rem] text-stone-400 mt-0.5">' + esc(skillSummary(cd.skills)) + ' \u00b7 ' + esc(attrSummary(cd.attributes)) + '</div>';
+      var acts = el('div', 'flex gap-1 mt-1 flex-wrap');
+      ROLES.forEach(function (r) {
+        acts.appendChild(smallBtn('hire \u00b7 ' + r.label.split(' /')[0], function () { hireCandidate(cd.id, 'tavern', r.id); rerender(); }));
+        if (r.biz.indexOf('casino') >= 0 && w.businesses.casino.owned) {
+          acts.appendChild(smallBtn('hire \u2192 Lantern \u00b7 ' + r.label.split(' /')[0], function () { hireCandidate(cd.id, 'casino', r.id); rerender(); }, { primary: true }));
+        }
+      });
+      row.appendChild(acts);
+      body.appendChild(row);
     });
   }
+  function abHiring(c, s) { }
 
-  /* ---------- Casino management ---------- */
-  function renderCasinoPane(pane, s) {
+  /* ================= Casino screens ================= */
+  function vbCasinoBuy(body, s) {
+    body.appendChild(el('div', 'px-1 text-[0.72rem] text-stone-300', 'The agent unlocks the door with a shrug. Dust lies an inch thick on the gaming tables; chandeliers hang like dead spiders. Upstairs: three floors of guest rooms, water-stained. It wants a fortune and a stern will.'));
+    var plan = el('div', 'mt-1.5 px-2 py-1.5 rounded border border-stone-800 bg-stone-900/60 text-[0.65rem] text-stone-400 space-y-0.5');
+    plan.innerHTML = '<div class="text-stone-300 mb-0.5">Restoration plan (after purchase)</div>';
+    CASINO_ROOMS.concat(CASINO_GROUND, CASINO_BASEMENT, CASINO_FUN).forEach(function (r) {
+      plan.innerHTML += '<div>\u00b7 ' + esc(r.name) + ' \u2014 ' + r.restoreCost + 'g</div>';
+    });
+    plan.innerHTML += '<div>\u00b7 8 guest rooms \u2014 400g each \u00b7 The Lantern Suite \u2014 1200g</div>';
+    plan.innerHTML += '<div class="text-stone-600 mt-0.5">Operating costs (staff wages, upkeep) recur nightly and weekly once open.</div>';
+    body.appendChild(plan);
+  }
+  function abCasinoBuy(c, s) {
+    var afford = s.economy.gold >= CASINO_PRICE;
+    c.appendChild(btn('Buy the deed \u2014 ' + CASINO_PRICE + 'g', 'Includes the full fixed layout: basement, ground floor, three guest floors + suite. One guest room is serviceable on day one.', function () { purchaseCasino(); nav('casino'); }, { primary: afford, disabled: !afford }));
+  }
+  function vbCasino(body, s) {
     var c = s.wexp.businesses.casino;
-    if (!c.owned) { pane.appendChild(el('div', 'text-sm text-stone-500', 'You do not hold the deed yet.')); return; }
-    var head = el('div', 'flex flex-wrap gap-3 items-baseline text-sm');
-    head.innerHTML = '<span class="text-stone-100">' + esc(c.name) + '</span>' +
-      '<span class="text-amber-400">treasury ' + Math.floor(c.treasury) + 'g</span>' +
-      '<span class="text-stone-400">renown ' + c.reputation + '/100</span>';
-    pane.appendChild(head);
-    var ops = el('div', 'flex gap-2 flex-wrap');
-    pane.appendChild(ops);
-    var sweep = el('button', 'px-3 py-1 rounded text-sm bg-amber-700 hover:bg-amber-600 text-stone-100', 'Sweep treasury → strongbox');
-    sweep.addEventListener('click', function () { sweepTreasury(); rerender(); });
-    ops.appendChild(sweep);
-    var dep = el('button', 'px-3 py-1 rounded text-sm bg-stone-800 hover:bg-stone-700 border border-stone-700 text-stone-300', 'Deposit 200g');
-    dep.addEventListener('click', function () { depositTreasury(200); rerender(); });
-    ops.appendChild(dep);
-    var lg = el('button', 'px-3 py-1 rounded text-sm bg-stone-800 hover:bg-stone-700 border border-stone-700 text-stone-300', 'Ledger');
-    lg.addEventListener('click', function () { openOverlay({ id: 'ledger', arg: null, render: renderLedger }); });
-    ops.appendChild(lg);
-
-    pane.appendChild(el('h4', 'text-xs font-medium text-stone-400 uppercase tracking-wider mt-3 mb-1', 'Basement'));
-    roomRow(pane, c, CASINO_BASEMENT);
-    pane.appendChild(el('h4', 'text-xs font-medium text-stone-400 uppercase tracking-wider mt-3 mb-1', 'Ground floor'));
-    roomRow(pane, c, CASINO_GROUND);
-    roomRow(pane, c, CASINO_ROOMS);
-    roomRow(pane, c, CASINO_FUN);
-    pane.appendChild(el('h4', 'text-xs font-medium text-stone-400 uppercase tracking-wider mt-3 mb-1', 'Hotel — 3 guest floors + suite (max 10 rooms)'));
-    roomRow(pane, c, hotelRoomList(), c.hotel.rooms);
-
-    pane.appendChild(el('h4', 'text-xs font-medium text-stone-400 uppercase tracking-wider mt-3 mb-1', 'Play at your own tables (stakes from the strongbox)'));
-    var games = el('div', 'flex gap-2 flex-wrap');
-    pane.appendChild(games);
-    CASINO_ROOMS.forEach(function (r) {
-      var ready = c.rooms[r.id] && c.rooms[r.id].status === 'ready';
-      var b = el('button', 'px-3 py-1 rounded text-sm ' + (ready ? 'bg-stone-800 hover:bg-stone-700 border border-stone-700 text-stone-200' : 'bg-stone-900 text-stone-600 border border-stone-800'),
-        r.name.replace(' Room', 's') + (ready ? '' : ' (restore first)'));
-      if (ready) b.addEventListener('click', function () { openOverlay({ id: 'game', arg: r.id, render: renderGameScreen }); });
-      games.appendChild(b);
-    });
-
-    if (c.stage.ready) {
-      var stg = el('div', 'text-xs text-stone-400 mt-2', 'Stage: shows run most evenings when a singer is on staff. Tips split per contract.');
-      pane.appendChild(stg);
-    }
-    if (c.lounge.ready) {
-      var lr = el('div', 'bg-stone-800 border border-stone-800 rounded-lg px-3 py-2 mt-2 text-xs text-stone-400');
-      var label = 'Private lounge: ' + (c.lounge.enabled ? 'open — bookings are opt-in for each performer, nightly, and she can decline any night.' : 'closed.');
-      var tog = el('button', 'px-2 py-0.5 rounded text-xs bg-stone-900 border border-stone-700 text-stone-300 hover:bg-stone-700 ml-2', c.lounge.enabled ? 'Close' : 'Open');
-      tog.addEventListener('click', function () {
-        edit(function (st) { st.wexp.businesses.casino.lounge.enabled = !st.wexp.businesses.casino.lounge.enabled; });
-        rerender();
-      });
-      lr.innerHTML = '<span>' + esc(label) + '</span>';
-      lr.appendChild(tog);
-      pane.appendChild(lr);
-    }
+    if (!c.owned) { body.appendChild(el('div', 'px-1 text-[0.7rem] text-stone-500', 'You do not hold the deed yet.')); return; }
+    body.appendChild(el('div', 'px-1 text-[0.72rem] text-stone-200', esc(c.name) + ' <span class="text-amber-300">treasury ' + Math.floor(c.treasury) + 'g</span> <span class="text-stone-500">\u00b7 renown ' + c.reputation + '/100</span>'));
+    body.appendChild(sectionLabel('Basement'));
+    casinoRoomLines(body, c, CASINO_BASEMENT);
+    body.appendChild(sectionLabel('Ground floor'));
+    casinoRoomLines(body, c, CASINO_GROUND);
+    casinoRoomLines(body, c, CASINO_ROOMS);
+    casinoRoomLines(body, c, CASINO_FUN);
+    body.appendChild(sectionLabel('Hotel \u2014 3 guest floors + suite (max 10 rooms)'));
+    casinoRoomLines(body, c, hotelRoomList(), c.hotel.rooms);
+    if (c.stage.ready) body.appendChild(el('div', 'px-1 text-[0.65rem] text-stone-500', 'Stage: shows run most evenings when a singer is on staff. Tips split per contract.'));
+    if (c.lounge.ready) body.appendChild(el('div', 'px-1 text-[0.65rem] text-stone-500', 'Private lounge: ' + (c.lounge.enabled ? 'open \u2014 bookings are opt-in for each performer, nightly, and she can decline any night.' : 'closed.')));
   }
-  function roomRow(pane, c, defs, store) {
+  function casinoRoomLines(body, c, defs, store) {
     defs.forEach(function (r) {
       var st = store ? store[r.id] : c.rooms[r.id];
       var ready = st && st.status === 'ready';
-      var row = el('div', 'bg-stone-800 border border-stone-700 rounded-lg px-3 py-2 flex items-center justify-between gap-2 flex-wrap');
       var desc = ready
-        ? (store ? 'open · quality ' + st.quality + ' · ' + st.rate + 'g/night · clean ' + Math.round(st.clean) + (st.guest ? ' · guest: ' + esc(st.guest.name) + ' (' + st.nightsLeft + 'n left)' : ' · empty') : 'open' + (r.game ? ' · stakes ' + gameStakes(rawState(), r.id).min + '-' + gameStakes(rawState(), r.id).max + 'g' : ''))
-        : 'derelict · restore for ' + r.restoreCost + 'g';
-      row.innerHTML = '<div><span class="text-sm text-stone-100">' + esc(r.name) + '</span> <span class="text-xs text-stone-500 ml-1">' + desc + '</span></div>';
-      var right = el('div', 'flex gap-1');
-      if (!ready) {
-        var b = el('button', 'px-2 py-0.5 rounded text-xs bg-stone-900 border border-stone-700 text-stone-300 hover:bg-stone-700', 'Restore (' + r.restoreCost + 'g)');
-        b.addEventListener('click', function () { restoreCasinoRoom(r.id); rerender(); });
-        right.appendChild(b);
-      } else if (r.game && !store && st.tier !== 2) {
-        var ub = el('button', 'px-2 py-0.5 rounded text-xs bg-stone-900 border border-stone-700 text-stone-300 hover:bg-stone-700', 'Raise limits (500g)');
-        ub.addEventListener('click', function () { upgradeStakes(r.id); rerender(); });
-        right.appendChild(ub);
-      }
-      row.appendChild(right);
-      pane.appendChild(row);
+        ? (store ? 'open \u00b7 quality ' + st.quality + ' \u00b7 ' + st.rate + 'g/night \u00b7 clean ' + Math.round(st.clean) + (st.guest ? ' \u00b7 guest: ' + esc(st.guest.name) + ' (' + st.nightsLeft + 'n left)' : ' \u00b7 empty') : 'open' + (r.game ? ' \u00b7 stakes ' + gameStakes(rawState(), r.id).min + '-' + gameStakes(rawState(), r.id).max + 'g' : ''))
+        : 'derelict \u00b7 restore for ' + r.restoreCost + 'g';
+      body.appendChild(el('div', 'px-2 py-1.5 rounded border ' + (ready ? 'border-stone-800 bg-stone-900/40' : 'border-dashed border-stone-800 bg-stone-900/30') + ' flex items-baseline justify-between gap-2 flex-wrap',
+        '<span class="text-[0.72rem] text-stone-200">' + esc(r.name) + '</span>' +
+        '<span class="text-[0.65rem] ' + (ready ? 'text-stone-400' : 'text-stone-600 italic') + '">' + desc + '</span>'));
     });
   }
-  function renderLedger(root) {
-    renderShell(root, 'The Gilded Lantern — ledger', goldBadge(), function (body) {
-      var s = rawState(); ensureWexp(s);
-      var c = s.wexp.businesses.casino;
-      var byCat = {};
-      c.ledger.forEach(function (e) { byCat[e.cat] = round1((byCat[e.cat] || 0) + e.amount); });
-      var sums = el('div', 'bg-stone-950/60 border border-stone-800 rounded-lg px-3 py-2 text-xs text-stone-300 flex flex-wrap gap-3');
-      Object.keys(byCat).forEach(function (cat) {
-        sums.innerHTML += '<span>' + esc(cat) + ': <span class="' + (byCat[cat] >= 0 ? 'text-green-400' : 'text-red-400') + '">' + byCat[cat] + 'g</span></span>';
-      });
-      body.appendChild(sums);
-      var list = el('div', 'space-y-0.5 text-xs');
-      body.appendChild(list);
-      c.ledger.slice(-60).reverse().forEach(function (e) {
-        list.appendChild(el('div', 'flex justify-between border-b border-stone-900 py-0.5',
-          '<span class="text-stone-400">D' + e.day + ' · ' + esc(e.note || e.cat) + '</span>' +
-          '<span class="' + (e.amount >= 0 ? 'text-green-400' : 'text-red-400') + '">' + e.amount + 'g</span>'));
-      });
-    }, function (foot) {
-      foot.appendChild(backBar(function () { openVillageTab('casino'); }));
+  function abCasino(c, s) {
+    var cs = s.wexp.businesses.casino;
+    if (!cs.owned) return;
+    c.appendChild(btn('Sweep treasury \u2192 strongbox', 'Move the night\u2019s take to the tavern', function () { sweepTreasury(); rerender(); }, { primary: true }));
+    c.appendChild(btn('Deposit 200g', 'Bank coin into the treasury', function () { depositTreasury(200); rerender(); }, { disabled: s.economy.gold < 200 }));
+    c.appendChild(btn('Open the ledger', 'Every coin the Lantern has taken or paid', function () { nav('ledger'); }));
+    CASINO_ROOMS.concat(CASINO_GROUND, CASINO_BASEMENT, CASINO_FUN).forEach(function (r) {
+      var st = cs.rooms[r.id];
+      if (!st || st.status !== 'ready') c.appendChild(btn('Restore ' + r.name + ' (' + r.restoreCost + 'g)', 'Put this room back to work', function () { restoreCasinoRoom(r.id); rerender(); }, { disabled: s.economy.gold < r.restoreCost }));
+      else if (r.game && st.tier !== 2) c.appendChild(btn('Raise limits \u2014 ' + r.name + ' (500g)', 'Higher stakes at the tables', function () { upgradeStakes(r.id); rerender(); }, { disabled: s.economy.gold < 500 }));
     });
+    CASINO_ROOMS.forEach(function (r) {
+      var st = cs.rooms[r.id];
+      if (st && st.status === 'ready') c.appendChild(btn('Play ' + r.name.replace(' Room', 's'), 'Sit down at your own table', function () { nav('game:' + r.id); }));
+    });
+    if (cs.lounge.ready) c.appendChild(btn(cs.lounge.enabled ? 'Close the private lounge' : 'Open the private lounge', cs.lounge.enabled ? 'No bookings tonight' : 'Let the dancers take bookings', function () { edit(function (st) { st.wexp.businesses.casino.lounge.enabled = !st.wexp.businesses.casino.lounge.enabled; }); rerender(); }));
+  }
+  function vbLedger(body, s) {
+    var c = s.wexp.businesses.casino;
+    var byCat = {};
+    c.ledger.forEach(function (e) { byCat[e.cat] = round1((byCat[e.cat] || 0) + e.amount); });
+    var sums = el('div', 'px-2 py-1.5 rounded border border-stone-800 bg-stone-900/60 text-[0.7rem] text-stone-300 flex flex-wrap gap-2');
+    Object.keys(byCat).forEach(function (cat) {
+      sums.innerHTML += '<span>' + esc(cat) + ': <span class="' + (byCat[cat] >= 0 ? 'text-amber-300' : 'text-rose-300') + '">' + byCat[cat] + 'g</span></span>';
+    });
+    body.appendChild(sums);
+    var list = el('div', 'space-y-0.5 text-[0.65rem] px-1');
+    body.appendChild(list);
+    c.ledger.slice(-60).reverse().forEach(function (e) {
+      list.appendChild(el('div', 'flex justify-between border-b border-stone-900 py-0.5',
+        '<span class="text-stone-400">D' + e.day + ' \u00b7 ' + esc(e.note || e.cat) + '</span>' +
+        '<span class="' + (e.amount >= 0 ? 'text-amber-300' : 'text-rose-300') + '">' + e.amount + 'g</span>'));
+    });
+  }
+  function abLedger(c, s) { }
+
+  /* ================= Game screens (boards in panel, plays in Actions) ================= */
+  function vbGame(body, s, roomId) {
+    var def = casinoRoom(roomId);
+    if (!def) { body.appendChild(el('div', 'text-sm text-stone-500', 'That room is dark.')); return; }
+    var stakes = gameStakes(s, roomId);
+    if (roomId === 'card_room') renderCardsUI(body, s, stakes, actionsEl);
+    else if (roomId === 'dice_room') renderDiceUI(body, s, stakes, actionsEl);
+    else renderMorrisUI(body, s, actionsEl);
+    var recent = el('div', 'px-1 mt-1.5 text-[0.65rem] text-stone-600 space-y-0.5');
+    (s.log || []).slice(-3).forEach(function (l) { recent.appendChild(el('div', '', '\u00b7 ' + esc(l.text))); });
+    body.appendChild(recent);
+  }
+  function abGame(c, s, roomId) {
+    var def = casinoRoom(roomId);
+    if (!def) return;
+    var stakes = gameStakes(s, roomId);
+    if (roomId === 'card_room') renderCardsUI(el('div'), s, stakes, c);
+    else if (roomId === 'dice_room') renderDiceUI(el('div'), s, stakes, c);
+    else renderMorrisUI(el('div'), s, c);
   }
 
-  /* ---------- Game screens ---------- */
+  /* ---------- game UI helpers (info in the panel; buttons routed to the Actions pane) ---------- */
   var MORRIS_XY = [
     [0,0],[50,0],[100,0], [10,10],[50,10],[90,10], [20,20],[50,20],[80,20],
     [0,50],[10,50],[20,50], [80,50],[90,50],[100,50], [20,80],[50,80],[80,80],
@@ -2549,63 +2678,42 @@ Paths are keys joined by dots. "wife." is her; anything else starts at the game 
     [0,1,2],[3,4,5],[6,7,8],[9,10,11],[12,13,14],[15,16,17],[18,19,20],[21,22,23],
     [0,9,21],[3,10,18],[6,11,15],[1,4,7],[16,19,22],[8,12,17],[5,13,20],[2,14,23]
   ];
-  function renderGameScreen(root) {
-    var roomId = screenArg || 'card_room';
-    var s = rawState(); ensureWexp(s);
-    var def = casinoRoom(roomId);
-    renderShell(root, def.name + ' — play a hand', goldBadge(), function (body) {
-      var stakes = gameStakes(s, roomId);
-      if (roomId === 'card_room') renderCardsUI(body, s, stakes);
-      else if (roomId === 'dice_room') renderDiceUI(body, s, stakes);
-      else renderMorrisUI(body, s);
-      var recent = el('div', 'mt-3 bg-stone-950/60 border border-stone-800 rounded-lg px-3 py-2 text-xs text-stone-400 space-y-1');
-      (s.log || []).slice(-3).forEach(function (l) { recent.appendChild(el('div', '', '· ' + esc(l.text))); });
-      body.appendChild(recent);
-    }, function (foot) {
-      foot.appendChild(backBar(function () { openVillageTab('casino'); }));
-      if (roomId === 'board_room' && MORRIS.state === 'play') foot.appendChild(btn('Walk away (45 min pass)', '', function () { morrisFinishTime(); rerender(); }));
-    });
-  }
-  function renderCardsUI(body, s, stakes) {
-    body.appendChild(el('div', 'text-xs text-stone-400', 'One-and-Twenty. Beat the house to 21 or closer; aces count 11 or 1. Dealer stands on 17. Stakes ' + stakes.min + '–' + stakes.max + 'g.'));
-    var hand = el('div', 'flex gap-6 my-2');
+  function cardName(r) { return r === 1 ? 'A' : r === 11 ? 'J' : r === 12 ? 'Q' : r === 13 ? 'K' : String(r); }
+  function renderCardsUI(body, s, stakes, acts) {
+    var out = acts || body;
+    body.appendChild(el('div', 'px-1 text-[0.7rem] text-stone-400', 'One-and-Twenty. Beat the house to 21 or closer; aces count 11 or 1. Dealer stands on 17. Stakes ' + stakes.min + '\u2013' + stakes.max + 'g.'));
+    var hand = el('div', 'flex gap-6 my-2 px-1');
     var pv = cardValue(CARD_GAME.player), dv = cardValue(CARD_GAME.dealer);
-    hand.innerHTML = '<div><div class="text-xs text-stone-500 mb-1">You</div><div class="text-2xl text-stone-100">' + (CARD_GAME.player.length ? pv : '—') + '</div><div class="text-xs text-stone-400">' + CARD_GAME.player.map(cardName).join(', ') + '</div></div>' +
-      '<div><div class="text-xs text-stone-500 mb-1">House</div><div class="text-2xl text-stone-100">' + (CARD_GAME.state === 'play' ? CARD_GAME.dealer.length + ' card, face down' : (CARD_GAME.dealer.length ? dv : '—')) + '</div><div class="text-xs text-stone-400">' + (CARD_GAME.state === 'play' ? '' : CARD_GAME.dealer.map(cardName).join(', ')) + '</div></div>';
+    hand.innerHTML = '<div><div class="text-[0.65rem] text-stone-500 mb-1">You</div><div class="text-2xl text-stone-100">' + (CARD_GAME.player.length ? pv : '\u2014') + '</div><div class="text-[0.7rem] text-stone-400">' + CARD_GAME.player.map(cardName).join(', ') + '</div></div>' +
+      '<div><div class="text-[0.65rem] text-stone-500 mb-1">House</div><div class="text-2xl text-stone-100">' + (CARD_GAME.state === 'play' ? CARD_GAME.dealer.length + ' card, face down' : (CARD_GAME.dealer.length ? dv : '\u2014')) + '</div><div class="text-[0.7rem] text-stone-400">' + (CARD_GAME.state === 'play' ? '' : CARD_GAME.dealer.map(cardName).join(', ')) + '</div></div>';
     body.appendChild(hand);
-    var acts = el('div', 'flex gap-2 flex-wrap');
-    body.appendChild(acts);
     if (CARD_GAME.state !== 'play') {
       [stakes.min, 10, 25, stakes.max].filter(function (v, i, a) { return v >= stakes.min && v <= stakes.max && a.indexOf(v) === i; }).forEach(function (v) {
-        acts.appendChild(btn('Deal · ' + v + 'g', '', function () { startCards(v); rerender(); }, { disabled: s.economy.gold < v }));
+        out.appendChild(btn('Deal \u00b7 ' + v + 'g', 'One-and-Twenty hand', function () { startCards(v); rerender(); }, { disabled: s.economy.gold < v }));
       });
     } else {
-      acts.appendChild(btn('Hit', '', function () { resolveCards('hit'); rerender(); }, { primary: true }));
-      acts.appendChild(btn('Stand', '', function () { resolveCards('stand'); rerender(); }));
+      out.appendChild(btn('Hit', 'Take another card', function () { resolveCards('hit'); rerender(); }, { primary: true }));
+      out.appendChild(btn('Stand', 'Hold your total', function () { resolveCards('stand'); rerender(); }));
     }
   }
-  function cardName(r) { return r === 1 ? 'A' : r === 11 ? 'J' : r === 12 ? 'Q' : r === 13 ? 'K' : String(r); }
-  function renderDiceUI(body, s, stakes) {
-    body.appendChild(el('div', 'text-xs text-stone-400', 'Cast the Bones. Under/Over 7 pays 2.2×, a hard seven pays 5×. Wager ' + stakes.min + '–' + stakes.max + 'g.'));
-    var dice = el('div', 'text-3xl my-2 text-stone-100', DICE_GAME.dice[0] ? DICE_GAME.dice.join(' + ') + ' = ' + (DICE_GAME.dice[0] + DICE_GAME.dice[1]) : '—');
-    body.appendChild(dice);
-    var acts = el('div', 'flex gap-2 flex-wrap');
-    body.appendChild(acts);
+  function renderDiceUI(body, s, stakes, acts) {
+    var out = acts || body;
+    body.appendChild(el('div', 'px-1 text-[0.7rem] text-stone-400', 'Cast the Bones. Under/Over 7 pays 2.2\u00d7, a hard seven pays 5\u00d7. Wager ' + stakes.min + '\u2013' + stakes.max + 'g.'));
+    body.appendChild(el('div', 'text-3xl my-2 px-1 text-stone-100', DICE_GAME.dice[0] ? DICE_GAME.dice.join(' + ') + ' = ' + (DICE_GAME.dice[0] + DICE_GAME.dice[1]) : '\u2014'));
     [stakes.min, 10, stakes.max].filter(function (v, i, a) { return v >= stakes.min && v <= stakes.max && a.indexOf(v) === i; }).forEach(function (v) {
       [['under', 'Under 7'], ['seven', 'Hard 7'], ['over', 'Over 7']].forEach(function (sd) {
-        acts.appendChild(btn(sd[1] + ' · ' + v + 'g', '', function () { startDice(v, sd[0]); rerender(); }, { disabled: s.economy.gold < v }));
+        out.appendChild(btn(sd[1] + ' \u00b7 ' + v + 'g', 'Cast the bones', function () { startDice(v, sd[0]); rerender(); }, { disabled: s.economy.gold < v }));
       });
     });
   }
-  function renderMorrisUI(body, s) {
-    body.appendChild(el('div', 'text-xs text-stone-400', "Nine Men's Morris. Place your nine men, then slide them. Three in a row lets you take a man. Stake " + MORRIS.stake + 'g — winner takes both.'));
+  function renderMorrisUI(body, s, acts) {
+    var out = acts || body;
+    body.appendChild(el('div', 'px-1 text-[0.7rem] text-stone-400', "Nine Men's Morris. Place your nine men, then slide them. Three in a row lets you take a man. Stake " + MORRIS.stake + 'g \u2014 winner takes both.'));
     if (MORRIS.state !== 'play') {
-      var acts = el('div', 'flex gap-2');
-      body.appendChild(acts);
-      acts.appendChild(btn('Sit down and play (stake ' + (MORRIS.stake || 25) + 'g)', '', function () { morrisStart('board_room'); rerender(); }, { disabled: s.economy.gold < (MORRIS.stake || 25) }));
+      out.appendChild(btn('Sit down and play (stake ' + (MORRIS.stake || 25) + 'g)', "Nine Men's Morris against the house", function () { morrisStart('board_room'); rerender(); }, { disabled: s.economy.gold < (MORRIS.stake || 25) }));
       return;
     }
-    var wrap = el('div', 'my-2');
+    var wrap = el('div', 'my-2 px-1');
     var svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('viewBox', '-12 -12 124 124');
     svg.setAttribute('class', 'w-64 h-64');
@@ -2630,41 +2738,82 @@ Paths are keys joined by dots. "wife." is her; anything else starts at the game 
     }
     wrap.appendChild(svg);
     body.appendChild(wrap);
-    var status = MORRIS.remove ? 'You made a mill — take one of the house\'s men.' :
+    var status = MORRIS.remove ? 'You made a mill \u2014 take one of the house\u2019s men.' :
       MORRIS.phase === 'place' ? 'Placing: ' + MORRIS.toPlace + ' men left each. Your move.' :
-      MORRIS.turn === 'P' ? (MORRIS.selected < 0 ? 'Pick one of your men to slide.' : 'Now pick an adjacent empty point.') : 'The house is thinking…';
-    body.appendChild(el('div', 'text-sm text-stone-300', esc(status)));
+      MORRIS.turn === 'P' ? (MORRIS.selected < 0 ? 'Pick one of your men to slide.' : 'Now pick an adjacent empty point.') : 'The house is thinking\u2026';
+    body.appendChild(el('div', 'px-1 text-[0.72rem] text-stone-300', esc(status)));
+    out.appendChild(btn('Walk away (45 min pass)', 'Forfeit the board and let the time go', function () { morrisFinishTime(); rerender(); }));
   }
 
-  /* ================= 11. Toast + DOM injection ================= */
-  function alertInline(msg) {
-    try {
-      var t = el('div', 'fixed bottom-4 left-1/2 -translate-x-1/2 z-[60] bg-stone-900 border border-stone-600 text-stone-200 text-sm rounded-lg px-4 py-2 shadow-xl', esc(msg));
-      document.body.appendChild(t);
-      setTimeout(function () { t.remove(); }, 2600);
-    } catch (e) { }
+  /* ---------- overlay fallback (only if the House pane cannot be found) ---------- */
+  function renderTownOverlay() {
+    var s = rawState(); ensureWexp(s);
+    var kind = scrKind(s), arg = scrArg(s);
+    openOverlay({ id: 'town', render: function (root) {
+      root.innerHTML = '';
+      var head = el('div', 'flex items-center justify-between px-5 py-4 border-b border-stone-800 shrink-0',
+        '<h2 class="text-lg font-semibold text-stone-100">' + esc(screenTitle(s)) + '</h2>' +
+        '<div class="flex items-center gap-3"><span class="text-sm text-stone-300">' + timeBadge() + '</span><span class="text-sm text-amber-400">' + goldBadge() + '</span></div>');
+      var closeB = el('button', 'text-stone-400 hover:text-stone-200 text-xl leading-none px-2', '&times;');
+      closeB.addEventListener('click', function (e) { e.stopPropagation(); leaveCity(); });
+      head.querySelector('div').appendChild(closeB);
+      root.appendChild(head);
+      var body = el('div', 'overflow-y-auto px-5 py-4 space-y-2');
+      var strip = companionStrip(s);
+      if (strip) body.appendChild(strip);
+      if (kind === 'shop') vbShop(body, s, arg);
+      else if (kind === 'friend') vbFriend(body, s);
+      else if (kind === 'outing') vbOuting(body, s, arg);
+      else if (kind === 'hiring') vbHiring(body, s);
+      else if (kind === 'casino') vbCasino(body, s);
+      else if (kind === 'casino_buy') vbCasinoBuy(body, s);
+      else if (kind === 'ledger') vbLedger(body, s);
+      else if (kind === 'game') vbGame(body, s, arg);
+      else vbVillage(body, s);
+      root.appendChild(body);
+      var foot = el('div', 'px-5 py-3 border-t border-stone-800 shrink-0 space-y-2 overflow-y-auto');
+      if (kind === 'shop') abShop(foot, s, arg);
+      else if (kind === 'friend') abFriend(foot, s);
+      else if (kind === 'outing') abOuting(foot, s, arg);
+      else if (kind === 'casino') abCasino(foot, s);
+      else if (kind === 'casino_buy') abCasinoBuy(foot, s);
+      else if (kind === 'game') abGame(foot, s, arg);
+      else if (kind === 'village') abVillage(foot, s);
+      var back = backTarget(s);
+      if (back) foot.appendChild(btn('\u2190 ' + (back === 'casino' ? 'The Lantern' : 'Village'), '', function () { nav(back); }));
+      foot.appendChild(btn('Head home', 'End the town trip', function () { leaveCity(); }, { primary: !back }));
+      root.appendChild(foot);
+    } });
   }
 
-  var interceptOff = false;
   function isTabButton(b) {
     var parent = b.parentElement;
     return !!(parent && parent.children.length >= 3 && parent.querySelectorAll('button').length === parent.children.length);
   }
   function injectVisitCity() {
     var btns = document.querySelectorAll('button');
-    var goOut = null;
-    for (var i = 0; i < btns.length; i++) {
+    var goOut = null, i;
+    for (i = 0; i < btns.length; i++) {
       if (btns[i].getAttribute('data-wexp')) continue;
       var t = btns[i].textContent || '';
       if (t.indexOf('Go out') >= 0 && !btns[i].disabled) { goOut = btns[i]; break; }
     }
     if (!goOut) return;
     var parent = goOut.parentElement;
-    if (!parent || parent.querySelector('[data-wexp="visit-city"]')) return;
+    if (!parent) return;
+    var existing = parent.querySelector('[data-wexp="visit-city"]');
+    var s = rawState();
+    var inside = !!(s && s.wexp && s.wexp.city && s.wexp.city.inside);
+    if (existing) {
+      existing.innerHTML = inside
+        ? '<span class="text-sm text-amber-300">You are in town</span><span class="text-xs text-stone-400 mt-0.5">the Village map is open in the House section</span>'
+        : '<span class="text-sm text-stone-100">Visit City</span><span class="text-xs text-stone-400 mt-0.5">the shops, the hiring hall, outings \u2014 opens in the House section</span>';
+      return;
+    }
     var b = document.createElement('button');
     b.setAttribute('data-wexp', 'visit-city');
     b.className = goOut.className;
-    b.innerHTML = '<span class="text-sm text-stone-100">Visit City</span><span class="text-xs text-stone-400 mt-0.5">the shops, the hiring hall, outings</span>';
+    b.innerHTML = '<span class="text-sm text-stone-100">Visit City</span><span class="text-xs text-stone-400 mt-0.5">the shops, the hiring hall, outings \u2014 opens in the House section</span>';
     b.addEventListener('click', function (e) { e.stopPropagation(); startCityVisit(); });
     parent.appendChild(b);
   }
@@ -2686,37 +2835,16 @@ Paths are keys joined by dots. "wife." is her; anything else starts at the game 
     }
   }
 
-  /* desktop layout: the house map pane header ("The house") gets a Village button and becomes "Home" */
-  function injectHousePane() {
-    var btns = document.querySelectorAll('button[title="Fold the map"]');
-    for (var i = 0; i < btns.length; i++) {
-      var b = btns[i];
-      var parent = b.parentElement;
-      if (!parent || parent.querySelector('[data-wexp="village-btn"]')) continue;
-      var vb = document.createElement('button');
-      vb.setAttribute('data-wexp', 'village-btn');
-      vb.setAttribute('title', 'Open the Village: town shops, hiring hall, the Lantern');
-      vb.className = 'w-full text-left px-1 pb-0.5 text-[0.62rem] font-semibold uppercase tracking-widest text-amber-400 hover:text-amber-300';
-      vb.textContent = 'Village \u2014 town & the Lantern';
-      vb.addEventListener('click', function (e) { e.stopPropagation(); startCityVisit(); });
-      parent.appendChild(vb);
-      for (var k = 0; k < b.childNodes.length; k++) {
-        var nd = b.childNodes[k];
-        if (nd.nodeType === 3 && (nd.nodeValue || '').indexOf('The house') >= 0) { nd.nodeValue = nd.nodeValue.replace('The house', 'Home'); break; }
-      }
-      break;
+  /* keep panel + actions in step with React re-renders: rebuild only when missing */
+  function syncTownUI() {
+    var s = rawState();
+    var inside = !!(s && s.wexp && s.wexp.city && s.wexp.city.inside);
+    if (!inside) {
+      if (panelEl || document.getElementById('wexp-town-panel')) hideTownPanel();
+      if (actionsEl || document.getElementById('wexp-town-actions')) { if (actionsEl) { try { actionsEl.remove(); } catch (e) { } actionsEl = null; } }
+      return;
     }
-  }
-
-  /* tab click interception: marked house tab opens the Village overlay instead */
-  if (typeof document !== 'undefined' && document.addEventListener) {
-    document.addEventListener('click', function (e) {
-      if (interceptOff) return;
-      var b = e.target && e.target.closest ? e.target.closest('button') : null;
-      if (!b || b.getAttribute('data-wexp-tab') !== 'house') return;
-      e.preventDefault(); e.stopPropagation();
-      startCityVisit();
-    }, true);
+    if (!document.getElementById('wexp-town-panel') || !document.getElementById('wexp-town-actions')) rerender();
   }
 
   var observerScheduled = false;
@@ -2727,7 +2855,7 @@ Paths are keys joined by dots. "wife." is her; anything else starts at the game 
       observerScheduled = false;
       try { injectVisitCity(); } catch (e) { }
       try { applyHouseTab(); } catch (e) { }
-      try { injectHousePane(); } catch (e) { }
+      try { syncTownUI(); } catch (e) { }
     });
   }
 
@@ -2790,6 +2918,7 @@ Paths are keys joined by dots. "wife." is her; anything else starts at the game 
     playerSellables: playerSellables, buyFromShop: buyFromShop, sellToShop: sellToShop, haggle: haggle,
     capacityOf: capacityOf, usedUnits: usedUnits, freeUnits: freeUnits, stillroomOf: stillroomOf,
     canGoCity: canGoCity, refreshCandidatesIfNeeded: refreshCandidatesIfNeeded,
+    nav: nav, rerender: rerender, setCompanion: setCompanion, companionOf: companionOf, scrKind: scrKind, scrArg: scrArg,
     hireCandidate: hireCandidate, assignEmployee: assignEmployee, dismissEmployee: dismissEmployee,
     weeklyPayrollIfDue: weeklyPayrollIfDue, payRole: payRole, casinoNightly: casinoNightly,
     purchaseCasino: purchaseCasino, restoreCasinoRoom: restoreCasinoRoom, casinoRoom: casinoRoom,
