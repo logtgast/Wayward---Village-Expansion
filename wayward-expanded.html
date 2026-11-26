@@ -882,7 +882,7 @@ Paths are keys joined by dots. "wife." is her; anything else starts at the game 
   }
 
   /* ================= 3. Expansion state: defaults, migration, shadow save ================= */
-  var WEXP_VERSION = 1, SHADOW_KEY = 'tavern-game-expansion';
+  var WEXP_VERSION = 2, SHADOW_KEY = 'tavern-game-expansion';
 
   function defaultWexp() {
     return {
@@ -944,14 +944,30 @@ Paths are keys joined by dots. "wife." is her; anything else starts at the game 
   function phaseOf(s) { return s.phase; }
   function canGoCity(s) {
     if (!s || s.gameOver) return { ok: false, why: 'Not now.' };
-    if (s.pendingEvent) return { ok: false, why: 'Something needs your attention first.' };
-    if (s.errandSession) return { ok: false, why: 'You are already out on an errand.' };
-    if (s.activeShoppingSession) return { ok: false, why: 'Finish at the clothier first.' };
-    if (s.phase === 'service' || s.phase === 'last_call')
-      return { ok: false, why: "You can't leave the floor while the tavern is open." };
-    if ((s.player.stats && s.player.stats.energy || 0) < 10)
-      return { ok: false, why: "You're too exhausted to walk into town." };
     return { ok: true };
+  }
+
+  /* ---------- fail-safe: never let a click vanish without a trace ---------- */
+  function showFatal(msg) {
+    try {
+      var strip = document.getElementById('wexp-errstrip');
+      if (!strip) {
+        strip = document.createElement('div');
+        strip.id = 'wexp-errstrip';
+        strip.setAttribute('data-wexp', 'errstrip');
+        strip.style.cssText = 'position:fixed;left:0.5rem;bottom:0.5rem;z-index:99999;max-width:60%;background:#7f1d1d;border:1px solid #b91c1c;color:#fecaca;font-size:0.65rem;padding:0.3rem 0.5rem;border-radius:0.375rem;cursor:pointer;font-family:monospace;';
+        strip.title = 'click to dismiss';
+        strip.addEventListener('click', function () { strip.remove(); });
+        document.body.appendChild(strip);
+      }
+      strip.textContent = 'expansion: ' + String(msg).slice(0, 220);
+    } catch (e) { }
+  }
+  function guardFatal(fn, label) {
+    return function () {
+      try { return fn.apply(this, arguments); }
+      catch (e) { showFatal(label + ': ' + (e && e.message ? e.message : e)); if (typeof console !== 'undefined' && console.error) console.error('wexp ' + label + ':', e); }
+    };
   }
   function startCityVisit() {
     try {
@@ -969,9 +985,24 @@ Paths are keys joined by dots. "wife." is her; anything else starts at the game 
     });
       focusHousePane();
       rerender();
+      setTimeout(function () {
+        try {
+          var shown = panelEl && document.contains(panelEl) && isDisplayed(panelEl);
+          var ov = document.getElementById('wexp-overlay');
+          if (ov && ov.style.display === 'flex') shown = true;
+          if (!shown) {
+            renderTownOverlay();
+            alertInline('The village opened in a floating window \u2014 the house pane was not reachable.');
+          }
+        } catch (e2) {
+          showFatal('failsafe: ' + (e2 && e2.message ? e2.message : e2));
+        }
+      }, 500);
     } catch (e) {
+      showFatal('visit-city: ' + (e && e.message ? e.message : e));
       if (typeof console !== 'undefined' && console.error) console.error('wexp visit-city:', e);
-      alertInline('Something blocked the lane to town: ' + (e && e.message ? e.message : e));
+      try { edit(function (st) { ensureWexp(st); st.wexp.city.inside = true; st.wexp.city.screen = 'village'; }); rerender(); } catch (e3) { }
+      alertInline('Recovered: the village opened after an internal error.');
     }
   }
   function leaveCity(silent) {
@@ -2141,10 +2172,28 @@ Paths are keys joined by dots. "wife." is her; anything else starts at the game 
     });
     rerender();
   }
+  function screenOk(s) {
+    var sc = scrRaw(s), kind = scrKind(s), arg = scrArg(s);
+    if (sc === 'village' || sc === 'friend' || sc === 'hiring' || sc === 'casino' || sc === 'casino_buy' || sc === 'ledger') return true;
+    if (kind === 'shop') return !!SHOP_BY_ID[arg];
+    if (kind === 'outing') {
+      var found = false; OUTINGS.forEach(function (o) { if (o.id === arg) found = true; });
+      return found;
+    }
+    if (kind === 'game') {
+      var g = false; CASINO_ROOMS.forEach(function (r) { if (r.id === arg) g = true; });
+      return g;
+    }
+    return false;
+  }
   function rerender() {
     var s = rawState(); if (!s) return;
     ensureWexp(s);
     if (!s.wexp || !s.wexp.city || !s.wexp.city.inside) { hideTownPanel(); if (actionsEl) actionsEl.innerHTML = ''; if (overlayEl) overlayEl.style.display = 'none'; return; }
+    if (!screenOk(s)) {
+      edit(function (st) { ensureWexp(st); st.wexp.city.screen = 'village'; });
+      s = rawState(); ensureWexp(s);
+    }
     if (renderTownPanel()) { if (overlayEl) overlayEl.style.display = 'none'; }
     else renderTownOverlay();
     renderTownActions();
@@ -2382,7 +2431,8 @@ Paths are keys joined by dots. "wife." is her; anything else starts at the game 
     head.appendChild(el('div', 'min-w-0',
       '<div class="text-[0.62rem] font-semibold uppercase tracking-widest text-amber-400">' + esc(screenTitle(s)) + '</div>' +
       '<div class="text-[0.65rem] text-stone-500">' + timeBadge() + ' \u00b7 ' + goldBadge() + '</div>'));
-    var right = el('div', 'flex gap-1 shrink-0');
+    var right = el('div', 'flex gap-1 shrink-0 items-center');
+    right.appendChild(el('span', 'text-[0.55rem] text-stone-600', 'expansion v' + WEXP_VERSION));
     if (back) right.appendChild(smallBtn('\u2190 ' + (back === 'casino' ? 'The Lantern' : 'Village'), function () { nav(back); }));
     right.appendChild(smallBtn('Head home \u2302', function () { leaveCity(); }, { title: 'End the town trip' }));
     head.appendChild(right);
@@ -2953,10 +3003,10 @@ Paths are keys joined by dots. "wife." is her; anything else starts at the game 
 
   function alertInline(msg) {
     try {
-      var t = el('div', 'bg-stone-900 border border-stone-600 text-stone-200 text-sm rounded-lg px-4 py-2 shadow-xl', esc(msg));
-      t.style.cssText = 'position:fixed;bottom:1rem;left:50%;transform:translateX(-50%);z-index:60;max-width:90%;';
+      var t = el('div', 'bg-stone-900 border border-amber-500 text-stone-100 text-sm rounded-lg px-4 py-2 shadow-xl', esc(msg));
+      t.style.cssText = 'position:fixed;top:3.5rem;left:50%;transform:translateX(-50%);z-index:99999;max-width:90%;font-weight:500;';
       document.body.appendChild(t);
-      setTimeout(function () { t.remove(); }, 2600);
+      setTimeout(function () { t.remove(); }, 4200);
     } catch (e) { }
   }
 
@@ -2989,6 +3039,7 @@ Paths are keys joined by dots. "wife." is her; anything else starts at the game 
     }
     var html = chipLabel(inside);
     if (chipEl.innerHTML !== html) chipEl.innerHTML = html;
+    chipEl.title = 'Wayward Village Expansion ' + WEXP_VERSION;
     chipEl.style.display = (inside && panelEl && document.contains(panelEl)) ? 'none' : 'block';
   }
   function injectVisitCity() {
@@ -3015,6 +3066,7 @@ Paths are keys joined by dots. "wife." is her; anything else starts at the game 
     var b = document.createElement('button');
     b.setAttribute('data-wexp', 'visit-city');
     b.className = goOut.className;
+    b.title = 'Wayward Village Expansion ' + WEXP_VERSION;
     b.innerHTML = '<span class="text-sm text-stone-100">Visit City</span><span class="text-xs text-stone-400 mt-0.5">the shops, the hiring hall, outings \u2014 opens in the House section</span>';
     b.addEventListener('click', function (e) { e.stopPropagation(); startCityVisit(); });
     parent.appendChild(b);
@@ -3038,6 +3090,27 @@ Paths are keys joined by dots. "wife." is her; anything else starts at the game 
   }
 
   /* keep panel + actions in step with React re-renders: rebuild only when missing */
+  /* document-level capture delegation: the click works no matter how many times
+     React recreates the button, and even if per-button listeners were lost */
+  var delegationInstalled = false;
+  function installClickDelegation() {
+    if (delegationInstalled || !document.addEventListener) return;
+    delegationInstalled = true;
+    document.addEventListener('click', function (e) {
+      try {
+        var n = e.target;
+        while (n && n.nodeType === 1) {
+          var a = n.getAttribute && n.getAttribute('data-wexp');
+          if (a === 'visit-city' || a === 'visit-chip') {
+            e.stopPropagation();
+            guardFatal(startCityVisit, 'visit')();
+            return;
+          }
+          n = n.parentElement;
+        }
+      } catch (err) { showFatal('click: ' + (err && err.message ? err.message : err)); }
+    }, true);
+  }
   function syncTownUI() {
     var s = rawState();
     var inside = !!(s && s.wexp && s.wexp.city && s.wexp.city.inside);
@@ -3109,6 +3182,10 @@ Paths are keys joined by dots. "wife." is her; anything else starts at the game 
 
   function boot() {
     if (typeof document === 'undefined' || !document.body) { setTimeout(boot, 300); return; }
+    installClickDelegation();
+    try {
+      window.addEventListener('error', function (ev) { if (ev && ev.error && /wexp|expansion/i.test(String(ev.message || ''))) showFatal('window: ' + (ev.error && ev.error.message ? ev.error.message : ev.message)); });
+    } catch (e) { }
     var mo = new MutationObserver(scheduleInjections);
     mo.observe(document.body, { childList: true, subtree: true });
     scheduleInjections();

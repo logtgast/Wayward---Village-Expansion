@@ -35,21 +35,24 @@ function t(name, cond) {
 }
 
 /* --- 1. migration / defaults on an old save --- */
-t('old save gains wexp with defaults', A.ensureWexp(state) === true && state.wexp.v === 1);
+t('old save gains wexp with defaults', A.ensureWexp(state) === true && state.wexp.v === A.defaultWexp().v);
 t('ensure idempotent', A.ensureWexp(state) === false);
 t('friend generated (Pippa protagonist)', A.isPippa(state) === true && A.ensureFriend(state).for === 'pippa');
 
-/* --- 2. city gating --- */
+/* --- 2. city gating (permissive: never silently refuse the player) --- */
 t('can go city during prep', A.canGoCity(state).ok === true);
 state.pendingEvent = { type: 'x' };
-t('blocked while pendingEvent', A.canGoCity(state).ok === false);
+t('permitted even with a pending event', A.canGoCity(state).ok === true);
 delete state.pendingEvent;
 state.phase = 'service';
-t('blocked during service', A.canGoCity(state).ok === false);
+t('permitted during service', A.canGoCity(state).ok === true);
 state.phase = 'prep';
 state.errandSession = { reason: 'forage' };
-t('blocked during errand', A.canGoCity(state).ok === false);
+t('permitted during an errand', A.canGoCity(state).ok === true);
 delete state.errandSession;
+state.gameOver = true;
+t('still blocked on game over', A.canGoCity(state).ok === false);
+delete state.gameOver;
 
 /* --- 3. shops: stock, prices, validation --- */
 const day0 = A.dayOf(state.slot);
@@ -259,7 +262,7 @@ const wexpSnapshot = JSON.parse(JSON.stringify(state.wexp));
 const reloaded = makeGameSave();
 reloaded.wexp = JSON.parse(JSON.stringify(wexpSnapshot));
 A.ensureWexp(reloaded);
-t('reloaded save keeps wexp (v, employees, casino)', reloaded.wexp.v === 1 && reloaded.wexp.businesses.casino.owned === true && Object.keys(reloaded.wexp.businesses.casino.hotel.rooms).length === 10);
+t('reloaded save keeps wexp (v, employees, casino)', reloaded.wexp.v === A.defaultWexp().v && reloaded.wexp.businesses.casino.owned === true && Object.keys(reloaded.wexp.businesses.casino.hotel.rooms).length === 10);
 const fresh = makeGameSave();
 A.ensureWexp(fresh);
 t('fresh save gets safe defaults', fresh.wexp && fresh.wexp.businesses.casino.owned === false && Object.keys(fresh.wexp.employees).length === 0);
