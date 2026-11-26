@@ -154,6 +154,27 @@ setTimeout(() => {
   api.rerender();
   t('sync does not resurrect the panel while home', !document.getElementById('wexp-town-panel'));
 
+  /* CHIP: with no Go out pane (e.g. the bedroom screen), a Visit City chip parks
+     itself in the house wrapper so the city is reachable from any screen */
+  goOutBtn.disabled = true;
+  root.appendChild(document.createTextNode(''));
+  setTimeout(() => {
+    const chip = document.getElementById('wexp-visit-chip');
+    t('chip injected when Go out pane is absent', !!chip);
+    t('chip lives inside the house wrapper', !!chip && wrapper.contains(chip));
+    t('chip is its own element (visit-chip, not a stale twin)', !!chip && chip.getAttribute('data-wexp') === 'visit-chip');
+    chip.click();
+    t('chip click opens the Village panel', !!document.getElementById('wexp-town-panel') && state.wexp.city.inside === true);
+    const panelHome = byText('#wexp-town-panel button', /Head home/);
+    t('panel header offers Head home without the Actions pane', !!panelHome);
+    panelHome.click();
+    t('chip flow returns home', state.wexp.city.inside === false);
+    goOutBtn.disabled = false;
+    root.appendChild(document.createTextNode(''));
+    setTimeout(() => {
+      t('chip removed once Go out pane returns', !document.getElementById('wexp-visit-chip'));
+      t('Visit City back next to Go out…', !!byText('#wexp-town-actions ~ *, #root button', /^Visit City/) || !!document.querySelector('button[data-wexp="visit-city"]'));
+
   /* REGRESSION (Bug A): the real game renders the desktop kit inside div.hidden.lg:flex,
      so the ONLY fold button on a <1024px viewport sits in a display:none subtree. Inline
      style replicates what a real browser computes for that Tailwind class in jsdom. */
@@ -184,4 +205,6 @@ setTimeout(() => {
 
   console.log('\n' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);
+    }, 120);
+  }, 120);
 }, 120);

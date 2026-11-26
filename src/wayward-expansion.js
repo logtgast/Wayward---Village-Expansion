@@ -2101,6 +2101,32 @@
     var parent = b.parentElement;
     return !!(parent && parent.children.length >= 3 && parent.querySelectorAll('button').length === parent.children.length);
   }
+  var chipEl = null;
+  function chipLabel(inside) {
+    return inside
+      ? '<span style="color:#fcd34d;font-weight:500;">\u2302 You are in town</span><span style="color:#a8a29e;"> \u2014 the Village map is open in the House section</span>'
+      : '<span style="color:#e7e5e4;">\u2302 Visit City</span><span style="color:#a8a29e;"> \u2014 shops, hiring hall, outings</span>';
+  }
+  function ensureChip(inside) {
+    var wrap = houseWrapper();
+    if (!wrap) { if (chipEl) { try { chipEl.remove(); } catch (e) { } chipEl = null; } return; }
+    if (!chipEl || !document.contains(chipEl)) {
+      chipEl = document.createElement('button');
+      chipEl.id = 'wexp-visit-chip';
+      chipEl.setAttribute('data-wexp', 'visit-chip');
+      chipEl.type = 'button';
+      chipEl.style.cssText = 'margin:0.25rem 0.25rem 0.25rem auto;display:block;width:calc(100% - 0.5rem);text-align:left;padding:0.4rem 0.6rem;border-radius:0.375rem;background:#292524;border:1px solid #57534e;font-size:0.7rem;cursor:pointer;';
+      chipEl.addEventListener('click', function (e) { e.stopPropagation(); startCityVisit(); });
+    }
+    var x8 = wrap.querySelector('.flex.flex-col.h-full.min-h-0');
+    var target = x8 || wrap;
+    if (chipEl.parentElement !== target) {
+      if (chipEl.parentElement) { try { chipEl.parentElement.removeChild(chipEl); } catch (e) { } }
+      target.appendChild(chipEl);
+    }
+    var html = chipLabel(inside);
+    if (chipEl.innerHTML !== html) chipEl.innerHTML = html;
+  }
   function injectVisitCity() {
     var btns = document.querySelectorAll('button');
     var goOut = null, i;
@@ -2109,12 +2135,13 @@
       var t = btns[i].textContent || '';
       if (t.indexOf('Go out') >= 0 && !btns[i].disabled) { goOut = btns[i]; break; }
     }
-    if (!goOut) return;
+    var s = rawState();
+    var inside = !!(s && s.wexp && s.wexp.city && s.wexp.city.inside);
+    if (!goOut) { ensureChip(inside); return; }
+    if (chipEl) { try { chipEl.remove(); } catch (e) { } chipEl = null; }
     var parent = goOut.parentElement;
     if (!parent) return;
     var existing = parent.querySelector('[data-wexp="visit-city"]');
-    var s = rawState();
-    var inside = !!(s && s.wexp && s.wexp.city && s.wexp.city.inside);
     if (existing) {
       existing.innerHTML = inside
         ? '<span class="text-sm text-amber-300">You are in town</span><span class="text-xs text-stone-400 mt-0.5">the Village map is open in the House section</span>'
