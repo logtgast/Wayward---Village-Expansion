@@ -210,7 +210,7 @@
   /* ================= 4. City session ================= */
   function phaseOf(s) { return s.phase; }
   function canGoCity(s) {
-    if (!s || s.gameOver || !s.started) return { ok: false, why: 'Not now.' };
+    if (!s || s.gameOver) return { ok: false, why: 'Not now.' };
     if (s.pendingEvent) return { ok: false, why: 'Something needs your attention first.' };
     if (s.errandSession) return { ok: false, why: 'You are already out on an errand.' };
     if (s.activeShoppingSession) return { ok: false, why: 'Finish at the clothier first.' };
@@ -1493,6 +1493,7 @@
   function renderShop(root) {
     var shopId = screenArg || 'herbalist';
     var def = SHOP_BY_ID[shopId];
+    edit(function (st) { ensureWexp(st); restock(st, def); });
     renderShell(root, def.name, goldBadge(), function (body) {
       var s = rawState(); ensureWexp(s);
       if (!openNow(s.slot, def.hours)) {
@@ -2001,12 +2002,16 @@
 
   /* ================= 12. Guardian: state upkeep, day ticks ================= */
   var lastSeenDay = null, lastLogLen = 0;
+  function inGameDom() {
+    try { return !!document.querySelector('[data-wexp="visit-city"],[data-wexp="village-btn"],button[data-wexp-tab="house"]'); } catch (e) { return false; }
+  }
   function guardian() {
     var w = W();
     if (!w || !w.state) return;
+    scheduleInjections();
     try {
       var s = rawState();
-      if (!s || !s.started || typeof s.slot !== 'number' || !s.economy) return;
+      if (!s || !inGameDom() || typeof s.slot !== 'number' || !s.economy) return;
       var need = ensureWexp(s);
       if (need) { edit(function (st) { ensureWexp(st); }); s = rawState(); }
       if (!s.wexp) return;
@@ -2033,8 +2038,6 @@
           edit(function (st) { ensureWexp(st); st.wexp.city.inside = false; logLine(st, 'The streets empty and the watch eyes you sideways. You make your way home.'); });
         }
       }
-
-      scheduleInjections();
     } catch (e) { /* never break the game */ }
   }
 

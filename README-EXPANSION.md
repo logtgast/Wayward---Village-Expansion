@@ -40,6 +40,7 @@ node --check src/wayward-expansion.js
 node tests/expansion.test.js          # 63 aserciones de lógica (§9 del brief)
 node tests/dom.test.js                # 15 aserciones de inyección UI (DOM simulado)
 node tests/ui-walk.js                 # recorre ~157 clics del overlay buscando crashes
+node tests/e2e-jsdom.js               # E2E: juego REAL en jsdom — nueva partida, Visit City, compra, casino
 node tools/build.js                   # (opcional) re-ensambla wayward-expanded.html
 ```
 
@@ -74,8 +75,13 @@ antes de `</body>` de `wayward-baseline.html`.
 
 - Si el juego cambia nombres internos (p. ej. `window.wayward`), la expansión degrada con
   mensajes de guardia en consola en lugar de romper el juego.
-- El renombrado de la pestaña "House"→"Village" y la inyección del botón usan un
-  MutationObserver; probado estáticamente y por contrato de API, no en navegador real.
+- El E2E (`tests/e2e-jsdom.js`) ejecuta el bundle real del juego dentro de jsdom: partida
+  nueva con Pippa, visita a la ciudad, compra en tienda y compra del casino verificados
+  end-to-end con 0 errores de consola. jsdom no es un navegador completo (sin layout
+  visual), pero el flujo lógico y la inyección DOM quedan cubiertos.
+- Detalle de integración descubierto en el E2E: `started` vive en el store de zustand, no
+  en `state`; el guardián usa una señal DOM (nodos inyectados presentes) en su lugar, y el
+  stock de las tiendas se repone de forma persistente dentro de `edit()` al entrar.
 
 ## Estructura del repo
 
@@ -86,5 +92,7 @@ src/wayward-expansion.js módulo completo (~2.050 líneas, 13 secciones)
 tests/expansion.test.js  harness: 63 aserciones de los tests de aceptación (§9)
 tests/dom.test.js        inyección UI verificada contra un DOM simulado (15 aserciones)
 tests/ui-walk.js         recorrido de ~157 clics del overlay (detector de crashes)
+tests/e2e-jsdom.js       E2E con el bundle real del juego en jsdom (partida nueva → Visit City → compras → casino)
+bundle.js                script inline extraído del HTML original (solo para auditoría/tests)
 BRIEF.md                 especificación original del proyecto
 ```
