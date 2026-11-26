@@ -222,9 +222,11 @@
     return { ok: true };
   }
   function startCityVisit() {
-    var s = rawState(); if (!s) return;
-    var g = canGoCity(s);
-    if (!g.ok) { alertInline(g.why); return; }
+    try {
+      var s = rawState();
+      if (!s) { alertInline('The town is out of reach right now.'); return; }
+      var g = canGoCity(s);
+      if (!g.ok) { alertInline(g.why); return; }
     if (s.wexp && s.wexp.city && s.wexp.city.inside) { nav('village'); return; }
     edit(function (st) {
       ensureWexp(st);
@@ -233,8 +235,12 @@
       st.wexp.city.screen = 'village';
       logLine(st, 'You walk down the lane into town. (' + hhmm(st.slot) + ')');
     });
-    focusHousePane();
-    rerender();
+      focusHousePane();
+      rerender();
+    } catch (e) {
+      if (typeof console !== 'undefined' && console.error) console.error('wexp visit-city:', e);
+      alertInline('Something blocked the lane to town: ' + (e && e.message ? e.message : e));
+    }
   }
   function leaveCity(silent) {
     edit(function (st) {
@@ -250,10 +256,14 @@
     if (actionsEl) { try { actionsEl.remove(); } catch (e) { } actionsEl = null; }
   }
   function focusHousePane() {
+    var marked = document.querySelector('button[data-wexp-tab="house"]');
+    if (marked) { marked.click(); return; }
     var btns = document.querySelectorAll('button');
     for (var i = 0; i < btns.length; i++) {
-      var t = (btns[i].textContent || '').trim().toLowerCase();
-      if ((t === 'house' || t === 'village') && isTabButton(btns[i])) { btns[i].click(); return; }
+      var b = btns[i], cls = b.className || '';
+      if (cls.indexOf('tracking-widest') < 0 || cls.indexOf('uppercase') < 0) continue;
+      var t = (b.textContent || '').trim().toLowerCase();
+      if ((t === 'house' || t === 'village') && isTabButton(b)) { b.click(); return; }
     }
   }
 
@@ -1403,23 +1413,46 @@
     var s = rawState(); if (!s) return;
     ensureWexp(s);
     if (!s.wexp || !s.wexp.city || !s.wexp.city.inside) { hideTownPanel(); if (actionsEl) actionsEl.innerHTML = ''; if (overlayEl) overlayEl.style.display = 'none'; return; }
-    if (!renderTownPanel()) renderTownOverlay();
+    if (renderTownPanel()) { if (overlayEl) overlayEl.style.display = 'none'; }
+    else renderTownOverlay();
     renderTownActions();
   }
 
   /* ---------- the panel: absolutely positioned over the house map, React-safe ---------- */
   var panelEl = null, actionsEl = null;
+  /* the game always renders the desktop kit inside "hidden lg:flex"; on <lg viewports
+     that subtree is display:none, so the panel must anchor only to a wrapper that is shown */
+  function isDisplayed(node) {
+    if (!node || node.nodeType !== 1) return false;
+    try { if (typeof node.checkVisibility === 'function') return node.checkVisibility(); } catch (e) { }
+    try {
+      var n = node;
+      while (n && n.nodeType === 1) {
+        var d = (n.style && n.style.display) || '';
+        if (!d && typeof window !== 'undefined' && typeof window.getComputedStyle === 'function') {
+          var cs = window.getComputedStyle(n);
+          d = cs ? cs.display : '';
+        }
+        if (d === 'none') return false;
+        n = n.parentElement;
+      }
+    } catch (e) { }
+    return true;
+  }
   function houseWrapper() {
-    var fold = document.querySelector('button[title="Fold the map"]');
-    if (!fold) return null;
-    var rootX8 = fold.closest ? fold.closest('.flex.flex-col.h-full.min-h-0') : null;
-    var wrap = rootX8 ? rootX8.parentElement : fold.parentElement;
-    if (!wrap || wrap === document.body) return null;
-    return wrap;
+    var folds = document.querySelectorAll('button[title="Fold the map"]');
+    for (var i = 0; i < folds.length; i++) {
+      var fold = folds[i];
+      var rootX8 = fold.closest ? fold.closest('.flex.flex-col.h-full.min-h-0') : null;
+      var wrap = rootX8 ? rootX8.parentElement : fold.parentElement;
+      if (!wrap || wrap === document.body) continue;
+      if (isDisplayed(wrap)) return wrap;
+    }
+    return null;
   }
   function ensureTownPanel() {
     var wrap = houseWrapper();
-    if (!wrap) return null;
+    if (!wrap) { hideTownPanel(); return null; }
     if (panelEl && wrap.contains(panelEl)) return panelEl;
     hideTownPanel();
     panelEl = document.createElement('div');
@@ -2055,6 +2088,15 @@
     } });
   }
 
+  function alertInline(msg) {
+    try {
+      var t = el('div', 'bg-stone-900 border border-stone-600 text-stone-200 text-sm rounded-lg px-4 py-2 shadow-xl', esc(msg));
+      t.style.cssText = 'position:fixed;bottom:1rem;left:50%;transform:translateX(-50%);z-index:60;max-width:90%;';
+      document.body.appendChild(t);
+      setTimeout(function () { t.remove(); }, 2600);
+    } catch (e) { }
+  }
+
   function isTabButton(b) {
     var parent = b.parentElement;
     return !!(parent && parent.children.length >= 3 && parent.querySelectorAll('button').length === parent.children.length);
@@ -2113,7 +2155,11 @@
       if (actionsEl || document.getElementById('wexp-town-actions')) { if (actionsEl) { try { actionsEl.remove(); } catch (e) { } actionsEl = null; } }
       return;
     }
-    if (!document.getElementById('wexp-town-panel') || !document.getElementById('wexp-town-actions')) rerender();
+    var panelGone = !document.getElementById('wexp-town-panel');
+    var panelHidden = !panelGone && panelEl && !isDisplayed(panelEl);
+    var actsGone = !document.getElementById('wexp-town-actions');
+    if (panelHidden || actsGone) { rerender(); return; }
+    if (panelGone && !(overlayEl && overlayEl.style.display === 'flex')) rerender();
   }
 
   var observerScheduled = false;

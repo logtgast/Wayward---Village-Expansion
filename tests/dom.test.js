@@ -154,6 +154,34 @@ setTimeout(() => {
   api.rerender();
   t('sync does not resurrect the panel while home', !document.getElementById('wexp-town-panel'));
 
+  /* REGRESSION (Bug A): the real game renders the desktop kit inside div.hidden.lg:flex,
+     so the ONLY fold button on a <1024px viewport sits in a display:none subtree. Inline
+     style replicates what a real browser computes for that Tailwind class in jsdom. */
+  const deskWrap = h('div', 'hidden lg:flex flex-1 min-h-0');
+  deskWrap.style.display = 'none';
+  housePane.parentElement.replaceChild(deskWrap, housePane);
+  deskWrap.appendChild(housePane);
+
+  const mobPane = h('div', 'relative flex flex-col min-h-0');
+  const mobWrap = h('div', 'flex-1 min-h-0 flex flex-col p-2');
+  const mobX8 = h('div', 'flex flex-col h-full min-h-0');
+  mobX8.appendChild(h('button', 'w-full text-left px-1 pb-0.5 uppercase tracking-widest text-stone-600', null, { type: 'button', title: 'Fold the map' }));
+  mobWrap.appendChild(mobX8);
+  mobPane.appendChild(mobWrap);
+  root.appendChild(mobPane);
+
+  global.window.wayward.edit(s => { s.wexp.city.inside = true; s.wexp.city.screen = 'village'; });
+  api.rerender();
+  const panel2 = document.getElementById('wexp-town-panel');
+  t('regression: panel anchored to the VISIBLE (mobile) wrapper', !!panel2 && panel2.parentElement === mobWrap);
+  t('regression: panel never inside the hidden desktop container', !!panel2 && !deskWrap.contains(panel2));
+
+  mobWrap.style.display = 'none';
+  api.rerender();
+  const overlay = document.getElementById('wexp-overlay');
+  t('regression: no panel when no visible house wrapper', !document.getElementById('wexp-town-panel'));
+  t('regression: fallback overlay opens instead', !!overlay && overlay.style.display === 'flex');
+
   console.log('\n' + pass + ' passed, ' + fail + ' failed');
   process.exit(fail ? 1 : 0);
 }, 120);
