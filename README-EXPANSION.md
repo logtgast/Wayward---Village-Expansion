@@ -11,7 +11,13 @@ Conforme al brief (`BRIEF.md`), fases 1–5:
 
 | Sistema | Detalle |
 |---|---|
-| **Visitar Pueblo (Visit City)** | Botón junto a "Salir…". Disponible en preparación y cierre (no en servicio, no con recado pendiente, no con evento abierto). Auto-retorno a la taberna a las 2 a.m. |
+| **Visitar Pueblo (Visit City)** | Botón junto a "Go out…" en la columna/pestaña de acciones. Disponible en preparación y cierre (no en servicio, no con recado pendiente, no con evento abierto). Auto-retorno a la taberna a las 2 a.m. |
+
+**Dónde están los botones** (tres puntos de entrada, según el diseño del juego):
+
+- **Escritorio (≥lg):** en el panel de acciones, debajo de "Go out…", aparece **"Visit City"**. Además, la cabecera del panel del mapa de la casa pasa a llamarse **"Home"** y encima suyo hay un botón **"Village — town & the Lantern"**.
+- **Móvil (<lg):** la pestaña **"house"** de la barra inferior pasa a llamarse **"Village"** y al pulsarla abre el panel del pueblo (el mapa original de la casa queda accesible dentro, como vista "Home").
+- El botón **"Visit City"** solo se inyecta cuando "Go out…" está activo (fase de preparación/cierre); fuera de esas fases el juego bloquea las salidas y no aparece.
 | **6 tiendas + Clothier** | Herbalista, Carnicero, Cervecero, Boticario, Mercado y Librero: destinos únicos (escena, no grafo de salas). Precios con recargo sobre el precio base del juego (`un[id].price`), reposición diaria por rareza, ofertas ×5/×10, regateo 1 vez por visita (carisma/ingenio), reventa al 50–60%. El **Sastre (Clothier)** se conserva intacto: su tarjeta enlaza al flujo original "Go out…". |
 | **Amiga de Pippa** | Visita a su casa (procedural, persistente en el save). Sube ánimo y vínculo; salida con cooldown diario y bloqueo si está agotada. |
 | **2 salidas en pareja** | Paseo y excursión: avanzan el reloj, cuestan oro, suben el ánimo de la esposa, con cooldown. |
@@ -31,7 +37,9 @@ Para regenerar el build tras editar `src/wayward-expansion.js`:
 
 ```bash
 node --check src/wayward-expansion.js
-node tests/expansion.test.js          # 63 aserciones (§9 del brief)
+node tests/expansion.test.js          # 63 aserciones de lógica (§9 del brief)
+node tests/dom.test.js                # 15 aserciones de inyección UI (DOM simulado)
+node tests/ui-walk.js                 # recorre ~157 clics del overlay buscando crashes
 node tools/build.js                   # (opcional) re-ensambla wayward-expanded.html
 ```
 
@@ -76,5 +84,7 @@ wayward-baseline.html    copia intacta del juego original
 wayward-expanded.html    ENTREGABLE: juego + expansión inyectada
 src/wayward-expansion.js módulo completo (~2.050 líneas, 13 secciones)
 tests/expansion.test.js  harness: 63 aserciones de los tests de aceptación (§9)
+tests/dom.test.js        inyección UI verificada contra un DOM simulado (15 aserciones)
+tests/ui-walk.js         recorrido de ~157 clics del overlay (detector de crashes)
 BRIEF.md                 especificación original del proyecto
 ```

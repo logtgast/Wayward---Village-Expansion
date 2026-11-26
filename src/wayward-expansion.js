@@ -1441,13 +1441,13 @@
       if (def.id === 'clothier') return;
       var open = openNow(s.slot, def.hours);
       var card = el('div', 'bg-stone-800 hover:bg-stone-700 border border-stone-700 rounded-lg px-4 py-3 cursor-pointer transition-colors');
-      var rep = def.renownGate && (s.tavernReputation.renown || 0) < def.renownGate;
+      var rep = def.renownGate && ((s.tavernReputation && s.tavernReputation.renown) || 0) < def.renownGate;
       card.innerHTML = '<div class="flex justify-between items-baseline"><span class="text-sm font-medium text-stone-100">' + esc(def.name) + '</span>' +
         '<span class="text-xs ' + (open ? 'text-green-400' : 'text-stone-500') + '">' + (open ? 'open' : 'closed · ' + hoursText(def.hours)) + '</span></div>' +
         '<div class="text-xs text-stone-400 mt-0.5">' + esc(def.desc) + '</div>';
       if (def.id === 'apothecary' && rep) card.innerHTML += '<div class="text-xs text-amber-500 mt-1">Cybil serves strangers with renown only — come back when the tavern is better known.</div>';
       card.addEventListener('click', function () {
-        if (def.renownGate && (s.tavernReputation.renown || 0) < def.renownGate) return;
+        if (def.renownGate && ((s.tavernReputation && s.tavernReputation.renown) || 0) < def.renownGate) return;
         openOverlay({ id: 'shop', arg: def.id, render: renderShop });
       });
       pane.appendChild(card);
@@ -1922,9 +1922,9 @@
     var btns = document.querySelectorAll('button');
     var goOut = null;
     for (var i = 0; i < btns.length; i++) {
-      if (btns[i].getAttribute('data-wexp') === 'visit-city') continue;
+      if (btns[i].getAttribute('data-wexp')) continue;
       var t = btns[i].textContent || '';
-      if (t.indexOf('Go out') === 0 && !btns[i].disabled) { goOut = btns[i]; break; }
+      if (t.indexOf('Go out') >= 0 && !btns[i].disabled) { goOut = btns[i]; break; }
     }
     if (!goOut) return;
     var parent = goOut.parentElement;
@@ -1940,12 +1940,39 @@
     var btns = document.querySelectorAll('button');
     for (var i = 0; i < btns.length; i++) {
       var b = btns[i];
-      var t = (b.textContent || '').trim();
-      if (t === 'House' && isTabButton(b)) {
+      if (b.getAttribute('data-wexp-tab')) continue;
+      var t = (b.textContent || '').trim().toLowerCase();
+      if (t === 'house' && isTabButton(b)) {
         b.setAttribute('data-wexp-tab', 'house');
-        if (b.childNodes.length && b.childNodes[0].nodeType === 3) b.childNodes[0].nodeValue = 'Village';
-        else if (b.textContent === 'House') b.textContent = 'Village';
+        var done = false;
+        for (var k = 0; k < b.childNodes.length; k++) {
+          var nd = b.childNodes[k];
+          if (nd.nodeType === 3 && (nd.nodeValue || '').toLowerCase().indexOf('house') >= 0) { nd.nodeValue = 'Village'; done = true; break; }
+        }
+        if (!done) b.textContent = 'Village';
       }
+    }
+  }
+
+  /* desktop layout: the house map pane header ("The house") gets a Village button and becomes "Home" */
+  function injectHousePane() {
+    var btns = document.querySelectorAll('button[title="Fold the map"]');
+    for (var i = 0; i < btns.length; i++) {
+      var b = btns[i];
+      var parent = b.parentElement;
+      if (!parent || parent.querySelector('[data-wexp="village-btn"]')) continue;
+      var vb = document.createElement('button');
+      vb.setAttribute('data-wexp', 'village-btn');
+      vb.setAttribute('title', 'Open the Village: town shops, hiring hall, the Lantern');
+      vb.className = 'w-full text-left px-1 pb-0.5 text-[0.62rem] font-semibold uppercase tracking-widest text-amber-400 hover:text-amber-300';
+      vb.textContent = 'Village \u2014 town & the Lantern';
+      vb.addEventListener('click', function (e) { e.stopPropagation(); startCityVisit(); });
+      parent.appendChild(vb);
+      for (var k = 0; k < b.childNodes.length; k++) {
+        var nd = b.childNodes[k];
+        if (nd.nodeType === 3 && (nd.nodeValue || '').indexOf('The house') >= 0) { nd.nodeValue = nd.nodeValue.replace('The house', 'Home'); break; }
+      }
+      break;
     }
   }
 
@@ -1968,6 +1995,7 @@
       observerScheduled = false;
       try { injectVisitCity(); } catch (e) { }
       try { applyHouseTab(); } catch (e) { }
+      try { injectHousePane(); } catch (e) { }
     });
   }
 
