@@ -58,17 +58,29 @@ const tabBar = h('div', 'flex shrink-0 border-t border-stone-700');
 ['story', 'house', 'focus'].forEach(id => tabBar.appendChild(h('button', 'flex-1 py-3 uppercase tracking-widest', id)));
 root.appendChild(tabBar);
 
-/* desktop house pane: wrapper (React renders x8 inside it; pane ancestor is position:relative) */
+/* desktop house pane: wrapper (React renders x8 inside it; pane ancestor is position:relative).
+   Mirrors the REAL game DOM: fold button + map box (title row + room grid) share a shrink
+   wrapper, which itself is a direct child of the x8 root. */
 const housePane = h('div', 'relative flex flex-col min-h-0 min-w-0');
 const wrapper = h('div', 'flex-1 min-h-0 flex flex-col p-2');
 const x8root = h('div', 'flex flex-col h-full min-h-0');
+const shrink = h('div', 'shrink-0');
 const houseHeader = h('button', 'w-full text-left px-1 pb-0.5 uppercase tracking-widest text-stone-600', null, { type: 'button', title: 'Fold the map' });
 houseHeader.appendChild(document.createTextNode('\u2304'));
 houseHeader.appendChild(document.createTextNode('The house'));
-x8root.appendChild(houseHeader);
+shrink.appendChild(houseHeader);
+const mapBox = h('div', 'mb-3 p-2 bg-stone-900/60 rounded-lg border border-stone-800');
+const titleRow = h('div', 'hidden desk:flex text-[0.6rem] uppercase tracking-widest text-stone-500');
+titleRow.appendChild(h('span', '', 'where everyone is'));
+titleRow.appendChild(h('span', 'text-[0.55rem] tracking-normal normal-case italic', 'click a room to go there'));
+mapBox.appendChild(titleRow);
+const roomGrid = h('div', 'flex flex-wrap gap-1.5');
 const roomCard = h('div', 'p-1.5 rounded border border-stone-800 bg-stone-900/40 text-xs leading-tight min-w-0');
 roomCard.appendChild(h('div', 'text-[0.65rem] uppercase tracking-wider text-stone-500 mb-0.5', 'Taproom'));
-x8root.appendChild(roomCard);
+roomGrid.appendChild(roomCard);
+mapBox.appendChild(roomGrid);
+shrink.appendChild(mapBox);
+x8root.appendChild(shrink);
 wrapper.appendChild(x8root);
 housePane.appendChild(wrapper); root.appendChild(housePane);
 
@@ -106,11 +118,16 @@ setTimeout(() => {
   t('arrival logged', (state.log || []).some(e => /walk down the lane/.test(e.text)));
 
   const panel = document.getElementById('wexp-town-panel');
-  t('town panel rendered inside the House pane wrapper', !!panel && panel.parentElement === wrapper);
-  t('panel is a React-safe trailing sibling of the map', panel && panel.previousElementSibling === x8root);
-  t('panel covers the house map (absolute, opaque)', panel && panel.style.position === 'absolute' && panel.style.backgroundColor !== '');
+  t('town panel lives INSIDE the house x8 root, in flow', !!panel && panel.parentElement === x8root);
+  t('panel is a React-safe trailing child of the house root', !!panel && panel.parentElement === x8root && panel.getAttribute('data-wexp') === 'town-panel');
+  t('panel fills the house column (flex, opaque, scrollable)', panel && panel.style.flex === '1 1 auto' && panel.style.overflowY === 'auto' && panel.style.backgroundColor !== '');
   t('panel shows the Village title', panel && panel.textContent.indexOf('Village \u2014 Whisperwood') >= 0);
-  t('house map card hidden behind panel (panel rendered after it)', panel && panel.textContent.indexOf('Taproom') < 0);
+  t('house header renamed to Village while in town', houseHeader.textContent.indexOf('Village') >= 0 && houseHeader.textContent.indexOf('The house') < 0);
+  t('subtitle renamed to the town of Whisperwood', titleRow.textContent.indexOf('Whisperwood') >= 0);
+  t('room grid hidden while the panel replaces the map', roomGrid.style.display === 'none');
+  t('fold header and title row stay visible above the panel', houseHeader.style.display !== 'none' && titleRow.style.display !== 'none');
+  t('panel ends with an In the zone strip', panel && /In the zone/.test(panel.textContent));
+  t('house map card content not visible (replaced, not duplicated)', panel && panel.textContent.indexOf('Taproom') < 0);
 
   const actionsBox = document.getElementById('wexp-town-actions');
   t('Actions pane container injected under Go out…', !!actionsBox && actionsBox.parentElement === btnGroup);
@@ -149,6 +166,23 @@ setTimeout(() => {
   t('town actions removed after leaving', !document.getElementById('wexp-town-actions'));
   t('companion reset on leaving', state.wexp.city.companion === null);
   t('departure logged', (state.log || []).some(e => /back up the lane/.test(e.text)));
+  t('house header restored to "The house" after leaving', houseHeader.textContent.indexOf('The house') >= 0 && houseHeader.textContent.indexOf('Village') < 0);
+  t('game house content restored (room grid visible again)', roomGrid.style.display !== 'none' && roomCard.style.display !== 'none');
+
+  /* notices: ask a keeper to hang the tavern's bill (re-enter town first) */
+  visitCity.click();
+  t('re-entered town for the notice errand', state.wexp.city.inside === true);
+  const rnd = Math.random; Math.random = () => 0.01;
+  api.nav('shop:herbalist');
+  const askBtn = byText('#wexp-town-actions button', /Ask to put up a notice/);
+  t('notice action offered at the herbalist', !!askBtn);
+  if (askBtn) askBtn.click();
+  Math.random = rnd;
+  t('notice recorded for the week', state.wexp.notices && state.wexp.notices.herbalist != null);
+  t('notice action disabled once hung', byText('#wexp-town-actions button', /Your notice hangs here/) !== null || (byText('#wexp-town-actions button', /Ask to put up a notice/) || { disabled: true }).disabled);
+  t('notice logged', (state.log || []).some(e => /notice/.test(e.text)));
+  byText('#wexp-town-actions button', /Head home/).click();
+  t('back home after notice errand', state.wexp.city.inside === false);
 
   /* syncTownUI stays idle while home */
   api.rerender();
@@ -167,6 +201,8 @@ setTimeout(() => {
     t('chip click opens the Village panel', !!document.getElementById('wexp-town-panel') && state.wexp.city.inside === true);
     const panelHome = byText('#wexp-town-panel button', /Head home/);
     t('panel header offers Head home without the Actions pane', !!panelHome);
+    t('actions fall back inside the panel when the Actions pane is absent', !!document.getElementById('wexp-panel-actions') && document.querySelectorAll('#wexp-panel-actions button').length > 0);
+    t('panel fallback actions sit before the In the zone strip', document.getElementById('wexp-panel-actions').nextElementSibling && /In the zone/.test(document.getElementById('wexp-panel-actions').nextElementSibling.textContent));
     panelHome.click();
     t('chip flow returns home', state.wexp.city.inside === false);
     goOutBtn.disabled = false;
@@ -194,7 +230,7 @@ setTimeout(() => {
   global.window.wayward.edit(s => { s.wexp.city.inside = true; s.wexp.city.screen = 'village'; });
   api.rerender();
   const panel2 = document.getElementById('wexp-town-panel');
-  t('regression: panel anchored to the VISIBLE (mobile) wrapper', !!panel2 && panel2.parentElement === mobWrap);
+  t('regression: panel anchored to the VISIBLE (mobile) x8 root', !!panel2 && panel2.parentElement === mobX8);
   t('regression: panel never inside the hidden desktop container', !!panel2 && !deskWrap.contains(panel2));
 
   mobWrap.style.display = 'none';
